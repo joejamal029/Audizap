@@ -110,48 +110,52 @@ class MetadataResolver:
             track_total=fallback_track_total or 1
         )
 
-        # Step 1: If artwork_url is missing, query Spotify catalog (no rate limits, 100% reliable)
-        if not meta.artwork_url:
+        # Step 1: Query Apple Music / iTunes as the PRIMARY catalog resolver
+        params = {
+            "term": clean_query,
+            "entity": "song",
+            "limit": 1
+        }
+        url = f"{cls.ITUNES_URL}?{urllib.parse.urlencode(params)}"
+        itunes_succeeded = False
+        try:
+            req = urllib.request.Request(url, headers=cls.HEADERS)
+            with urllib.request.urlopen(req, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                if payload.get("results"):
+                    r = payload["results"][0]
+                    meta.title = r.get("trackName") or meta.title
+                    meta.artist = r.get("artistName") or meta.artist
+                    meta.album = r.get("collectionName") or meta.album
+                    meta.track_number = r.get("trackNumber", meta.track_number)
+                    meta.track_total = r.get("trackCount", meta.track_total)
+                    meta.disc_number = r.get("discNumber", 1)
+                    meta.disc_total = r.get("discCount", 1)
+                    meta.genre = r.get("primaryGenreName") or meta.genre
+                    meta.duration_ms = r.get("trackTimeMillis")
+
+                    release_date = r.get("releaseDate")
+                    if release_date and len(release_date) >= 4:
+                        meta.release_year = release_date[:4]
+
+                    raw_art = r.get("artworkUrl100")
+                    if raw_art:
+                        meta.artwork_url = raw_art.replace("100x100bb.jpg", f"{artwork_size}x{artwork_size}bb.jpg")
+                        itunes_succeeded = True
+        except Exception as e:
+            logger.debug(f"Primary iTunes lookup for '{clean_query}': {e}")
+
+        # Step 2: Fallback to Spotify catalog ONLY IF iTunes had no art or failed
+        if not itunes_succeeded and not meta.artwork_url:
             sp_res = cls._search_spotify(clean_query)
             if sp_res and sp_res.get("artwork_url"):
-                meta.title = sp_res.get("title") or meta.title
-                meta.artist = sp_res.get("artist") or meta.artist
-                meta.album = sp_res.get("album") or meta.album
+                if not meta.title or meta.title == clean_query:
+                    meta.title = sp_res.get("title") or meta.title
+                if not meta.artist or meta.artist == "Unknown Artist":
+                    meta.artist = sp_res.get("artist") or meta.artist
+                if not meta.album or meta.album == clean_query:
+                    meta.album = sp_res.get("album") or meta.album
                 meta.artwork_url = sp_res.get("artwork_url")
-
-        # Step 2: Fallback to Apple Music / iTunes if Spotify search returned no art
-        if not meta.artwork_url:
-            params = {
-                "term": clean_query,
-                "entity": "song",
-                "limit": 1
-            }
-            url = f"{cls.ITUNES_URL}?{urllib.parse.urlencode(params)}"
-            try:
-                req = urllib.request.Request(url, headers=cls.HEADERS)
-                with urllib.request.urlopen(req, timeout=8) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-                    if payload.get("results"):
-                        r = payload["results"][0]
-                        meta.title = r.get("trackName") or meta.title
-                        meta.artist = r.get("artistName") or meta.artist
-                        meta.album = r.get("collectionName") or meta.album
-                        meta.track_number = r.get("trackNumber", meta.track_number)
-                        meta.track_total = r.get("trackCount", meta.track_total)
-                        meta.disc_number = r.get("discNumber", 1)
-                        meta.disc_total = r.get("discCount", 1)
-                        meta.genre = r.get("primaryGenreName") or meta.genre
-                        meta.duration_ms = r.get("trackTimeMillis")
-
-                        release_date = r.get("releaseDate")
-                        if release_date and len(release_date) >= 4:
-                            meta.release_year = release_date[:4]
-
-                        raw_art = r.get("artworkUrl100")
-                        if raw_art:
-                            meta.artwork_url = raw_art.replace("100x100bb.jpg", f"{artwork_size}x{artwork_size}bb.jpg")
-            except Exception as e:
-                logger.debug(f"Catalog fallback lookup for '{clean_query}': {e}")
 
         # Fetch artwork binary if available
         if meta.artwork_url:
