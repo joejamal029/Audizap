@@ -1,0 +1,8 @@
+﻿spotdl>=4.2.0
+customtkinter>=6.0.0
+yt-dlp>=2026.08.01
+mutagen>=1.48.0
+syncedlyrics>=1.0.0
+soundcloud-v2>=1.7.0
+rich>=13.9.0
+requests>=2.31.0
