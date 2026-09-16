@@ -37,7 +37,7 @@ python -m venv venv
 .\venv\Scripts\activate  # On Linux/macOS: source venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -e .
 
 # Download required binaries
 spotdl --download-ffmpeg
