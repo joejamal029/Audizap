@@ -6,6 +6,7 @@ Tier 3: Generic fallback
 """
 import subprocess
 import os
+import sys
 import shutil
 import logging
 from typing import Optional, Tuple
@@ -14,14 +15,8 @@ logger = logging.getLogger(__name__)
 
 class AudioResolver:
     def __init__(self, ytdlp_path: Optional[str] = None):
-        if not ytdlp_path:
-            venv_ytdlp = os.path.join(os.getcwd(), "venv", "Scripts", "yt-dlp.exe")
-            if os.path.exists(venv_ytdlp):
-                self.ytdlp = venv_ytdlp
-            else:
-                self.ytdlp = shutil.which("yt-dlp") or "yt-dlp"
-        else:
-            self.ytdlp = ytdlp_path
+        # Always use python -m yt_dlp to remain robust against virtualenv folder relocation
+        self.python_exe = sys.executable
 
     def download_stream(self, query: str, output_template: str, duration_sec: Optional[int] = None, tolerance: int = 25) -> Tuple[bool, str]:
         """
@@ -47,7 +42,8 @@ class AudioResolver:
 
     def _run_ytdlp(self, search_url: str, output_template: str, duration_sec: Optional[int], tolerance: int) -> bool:
         cmd = [
-            self.ytdlp,
+            self.python_exe,
+            "-m", "yt_dlp",
             search_url,
             "-x",
             "--audio-format", "mp3",
