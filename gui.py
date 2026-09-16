@@ -266,9 +266,12 @@ class ModernDownloaderApp(ctk.CTk):
                 for future in as_completed(futures):
                     res = future.result()
                     completed += 1
-                    if res.get("success"):
+                    if res.get("skipped"):
                         successful += 1
-                        self.log(f"✓ Completed: {os.path.basename(res['file'])}")
+                        self.log(f"⚡ Skipped (already exists): {os.path.basename(res['file'])}")
+                    elif res.get("success"):
+                        successful += 1
+                        self.log(f"✓ Downloaded & Enriched: {os.path.basename(res['file'])}")
                     else:
                         self.log(f"✗ Failed: {res.get('query')} ({res.get('error')})")
 

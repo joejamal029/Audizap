@@ -41,13 +41,11 @@ class PipelineEngine:
         result = {
             "query": query,
             "success": False,
+            "skipped": False,
             "file": None,
             "source": None,
             "error": None
         }
-
-        if progress_callback:
-            progress_callback(query, "Resolving metadata...")
 
         # 1. Resolve Canonical Metadata & Square Artwork
         meta = self.metadata_resolver.resolve(
@@ -61,17 +59,13 @@ class PipelineEngine:
         target_path = os.path.abspath(os.path.join(self.config.output_dir, f"{filename_base}.mp3"))
         result["file"] = target_path
 
-        # Check existing
+        # 2. Check if file already exists in download folder
         if os.path.exists(target_path) and not self.config.overwrite_existing:
-            if progress_callback:
-                progress_callback(query, "Already exists (Skipping)")
             result["success"] = True
+            result["skipped"] = True
             return result
 
-        # 2. Multi-tier Audio Acquisition using isolated temp dir
-        if progress_callback:
-            progress_callback(query, "Downloading audio stream...")
-
+        # 3. Multi-tier Audio Acquisition using isolated temp dir
         temp_dir = tempfile.mkdtemp(prefix="audio_stream_")
         temp_template = os.path.join(temp_dir, "stream.%(ext)s")
 
@@ -82,12 +76,9 @@ class PipelineEngine:
             tolerance=self.config.duration_tolerance
         )
 
-        # Locate raw downloaded file in temp_dir
         raw_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir)]
         if not downloaded or not raw_files:
             result["error"] = "Audio stream download failed across all tiers"
-            if progress_callback:
-                progress_callback(query, "Failed audio stream")
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
             return result
@@ -95,10 +86,7 @@ class PipelineEngine:
         raw_downloaded = raw_files[0]
         result["source"] = source_tier
 
-        # 3. Transcode to uniform CBR standards (e.g. 128k CBR, 44.1kHz)
-        if progress_callback:
-            progress_callback(query, f"Transcoding ({self.config.bitrate} CBR)...")
-
+        # 4. Transcode to uniform CBR standards (e.g. 128k CBR, 44.1kHz)
         transcoded = self.transcoder.transcode_to_cbr(
             input_path=raw_downloaded,
             target_bitrate=self.config.bitrate,
@@ -111,7 +99,6 @@ class PipelineEngine:
             shutil.rmtree(temp_dir, ignore_errors=True)
             return result
 
-        # Move to target output directory
         import shutil
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         if os.path.exists(target_path):
@@ -119,10 +106,7 @@ class PipelineEngine:
         shutil.move(raw_downloaded, target_path)
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-        # 4. Concurrent Tagging & Real-Time Synced Lyrics Retrieval
-        if progress_callback:
-            progress_callback(query, "Tagging & Embedding Synced Lyrics...")
-
+        # 5. Concurrent Tagging & Real-Time Synced Lyrics Retrieval
         tagged = self.tagger.tag_file(
             filepath=target_path,
             meta=meta,
@@ -130,9 +114,6 @@ class PipelineEngine:
         )
 
         result["success"] = tagged
-        if progress_callback:
-            progress_callback(query, "Complete!")
-
         return result
 
     def run(self, song_list: List[Dict[str, str]], status_callback: Optional[Callable] = None) -> List[Dict[str, any]]:
