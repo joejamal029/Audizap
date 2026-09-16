@@ -1,48 +1,85 @@
 ﻿"""
 Manifest parser supporting:
-1. Spotify playlist/album links
+1. Spotify playlist/album/track links (Fast Embed API extraction with timeout guard)
 2. Plain text files (e.g. "My Spotify Library.txt" or artist - title lists)
 3. Direct track queries
 """
 import re
 import os
+import json
 import logging
+import urllib.request
+import urllib.parse
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 class ManifestParser:
-    @staticmethod
-    def _init_spotify():
-        """Initialize spotdl SpotifyClient safely without triggering spotdl CLI argument parsing."""
-        try:
-            from spotdl.utils.config import get_config
-            from spotdl.utils.spotify import SpotifyClient
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
-            config = get_config()
-            spotify_keys = [
-                'client_id', 'client_secret', 'user_auth', 'no_cache',
-                'headless', 'max_retries', 'use_cache_file', 'use_official_api',
-                'auth_token', 'cache_path'
-            ]
-            spotify_settings = {k: config[k] for k in spotify_keys if k in config}
-            try:
-                SpotifyClient.init(**spotify_settings)
-            except Exception:
-                pass
+    @classmethod
+    def _fetch_spotify_embed_tracks(cls, entity_type: str, entity_id: str) -> Optional[List[Dict[str, any]]]:
+        """
+        Extracts tracks quickly and directly from Spotify Embed API.
+        Does not hang or freeze; returns None if not found, 404, or private.
+        """
+        embed_url = f"https://open.spotify.com/embed/{entity_type}/{entity_id}"
+        try:
+            req = urllib.request.Request(embed_url, headers=cls.HEADERS)
+            with urllib.request.urlopen(req, timeout=8) as response:
+                html = response.read().decode("utf-8")
+                match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html)
+                if not match:
+                    return None
+
+                data = json.loads(match.group(1))
+                page_props = data.get("props", {}).get("pageProps", {})
+
+                # Check if 404 or page not found
+                if page_props.get("status") == 404:
+                    return None
+
+                state = page_props.get("state", {}).get("data", {}).get("entity", {})
+                raw_tracks = state.get("trackList", [])
+
+                if not raw_tracks and "title" in state:
+                    # Single track embed
+                    raw_tracks = [state]
+
+                results = []
+                for t in raw_tracks:
+                    title = t.get("title", "")
+                    artist = t.get("subtitle", "")
+                    duration_ms = t.get("duration", 0)
+                    uri = t.get("uri", "")
+
+                    if title:
+                        query_str = f"{artist} - {title}" if artist else title
+                        results.append({
+                            "artist": artist,
+                            "title": title,
+                            "query": query_str,
+                            "url": f"https://open.spotify.com/track/{uri.split(':')[-1]}" if "track:" in uri else None,
+                            "duration": duration_ms // 1000 if duration_ms else None
+                        })
+                return results
+        except urllib.error.HTTPError as he:
+            logger.warning(f"Spotify embed returned HTTP {he.code} for {entity_type}/{entity_id}")
+            return None
         except Exception as e:
-            logger.warning(f"Could not initialize SpotifyClient: {e}")
+            logger.warning(f"Error reading Spotify embed: {e}")
+            return None
 
     @classmethod
     def parse_input(cls, source: str) -> List[Dict[str, any]]:
         """
-        Takes a file path, Spotify URL, or text query and returns a list of song dicts:
-        [{'artist': str, 'title': str, 'query': str, 'url': Optional[str], 'duration': Optional[int]}]
+        Takes a file path, Spotify URL, or text query and returns a list of song dicts.
         """
-        songs = []
-
         # 1. Text file input
         if os.path.isfile(source):
+            songs = []
             with open(source, "r", encoding="utf-8") as f:
                 lines = [l.strip() for l in f if l.strip()]
             for line in lines:
@@ -64,57 +101,31 @@ class ManifestParser:
 
         # 2. Spotify URL input
         if "open.spotify.com" in source:
-            try:
-                cls._init_spotify()
-                from spotdl.types.playlist import Playlist
-                from spotdl.types.album import Album
-                from spotdl.types.song import Song
+            # Parse entity type and ID
+            match = re.search(r"open\.spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)", source)
+            if match:
+                entity_type = match.group(1)
+                entity_id = match.group(2)
 
-                if "playlist" in source:
-                    pl = Playlist.from_url(source)
-                    for s in pl.songs:
-                        songs.append({
-                            "artist": s.artist,
-                            "title": s.name,
-                            "query": f"{s.artist} - {s.name}",
-                            "url": s.url,
-                            "duration": s.duration
-                        })
-                elif "album" in source:
-                    alb = Album.from_url(source)
-                    for s in alb.songs:
-                        songs.append({
-                            "artist": s.artist,
-                            "title": s.name,
-                            "query": f"{s.artist} - {s.name}",
-                            "url": s.url,
-                            "duration": s.duration
-                        })
-                elif "track" in source:
-                    s = Song.from_url(source)
-                    songs.append({
-                        "artist": s.artist,
-                        "title": s.name,
-                        "query": f"{s.artist} - {s.name}",
-                        "url": s.url,
-                        "duration": s.duration
-                    })
-                return songs
-            except Exception as e:
-                logger.warning(f"Failed to fetch Spotify playlist metadata via spotdl: {e}")
+                # Fast, non-blocking Embed extraction
+                tracks = cls._fetch_spotify_embed_tracks(entity_type, entity_id)
+                if tracks:
+                    return tracks
 
-        # 3. Direct query fallback
+                # If embed failed (e.g. private or 404), return empty list so GUI can notify user
+                return []
+
+        # 3. Direct song query fallback
         if " - " in source:
             parts = source.split(" - ", 1)
             artist, title = parts[0].strip(), parts[1].strip()
         else:
             artist, title = "", source.strip()
 
-        songs.append({
+        return [{
             "artist": artist,
             "title": title,
             "query": source.strip(),
             "url": None,
             "duration": None
-        })
-        return songs
+        }]
