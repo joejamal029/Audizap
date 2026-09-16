@@ -48,7 +48,7 @@ class MetadataResolver:
         )
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
             with urllib.request.urlopen(req, timeout=10) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 if payload.get("results"):
@@ -76,7 +76,7 @@ class MetadataResolver:
         # Fetch artwork binary if available
         if meta.artwork_url:
             try:
-                art_req = urllib.request.Request(meta.artwork_url, headers={"User-Agent": "Mozilla/5.0"})
+                art_req = urllib.request.Request(meta.artwork_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
                 with urllib.request.urlopen(art_req, timeout=10) as art_res:
                     meta.artwork_data = art_res.read()
             except Exception as e:
