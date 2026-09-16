@@ -1,4 +1,4 @@
-﻿"""
+"""
 Canonical metadata provider.
 Resolves official release metadata (Title, Artist, Album, Year, Track#, Genre, Square Art)
 using Apple Music / iTunes Catalog API without requiring API keys or auth tokens.
@@ -29,57 +29,80 @@ class CanonicalMetadata:
 
 class MetadataResolver:
     ITUNES_URL = "https://itunes.apple.com/search"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
 
     @classmethod
-    def resolve(cls, query: str, fallback_artist: str = "", fallback_title: str = "", artwork_size: int = 1000) -> CanonicalMetadata:
+    def resolve(
+        cls,
+        query: str,
+        fallback_artist: str = "",
+        fallback_title: str = "",
+        fallback_album: str = "",
+        fallback_artwork_url: Optional[str] = None,
+        fallback_release_year: Optional[str] = None,
+        fallback_track_number: int = 1,
+        fallback_track_total: int = 1,
+        artwork_size: int = 1000
+    ) -> CanonicalMetadata:
         """
         Query official music catalog for canonical metadata and artwork.
+        Prefers verified direct metadata/artwork when already provided.
         """
-        params = {
-            "term": query,
-            "entity": "song",
-            "limit": 1
-        }
-        url = f"{cls.ITUNES_URL}?{urllib.parse.urlencode(params)}"
         meta = CanonicalMetadata(
             title=fallback_title or query,
             artist=fallback_artist or "Unknown Artist",
-            album=fallback_title or query
+            album=fallback_album or fallback_title or query,
+            release_year=fallback_release_year,
+            artwork_url=fallback_artwork_url,
+            track_number=fallback_track_number or 1,
+            track_total=fallback_track_total or 1
         )
 
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-                if payload.get("results"):
-                    r = payload["results"][0]
-                    meta.title = r.get("trackName") or meta.title
-                    meta.artist = r.get("artistName") or meta.artist
-                    meta.album = r.get("collectionName") or meta.album
-                    meta.track_number = r.get("trackNumber", 1)
-                    meta.track_total = r.get("trackCount", 1)
-                    meta.disc_number = r.get("discNumber", 1)
-                    meta.disc_total = r.get("discCount", 1)
-                    meta.genre = r.get("primaryGenreName") or meta.genre
-                    meta.duration_ms = r.get("trackTimeMillis")
+        # If artwork_url is not already provided, query Apple Music / iTunes
+        if not meta.artwork_url:
+            params = {
+                "term": query,
+                "entity": "song",
+                "limit": 1
+            }
+            url = f"{cls.ITUNES_URL}?{urllib.parse.urlencode(params)}"
+            try:
+                req = urllib.request.Request(url, headers=cls.HEADERS)
+                with urllib.request.urlopen(req, timeout=8) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    if payload.get("results"):
+                        r = payload["results"][0]
+                        meta.title = r.get("trackName") or meta.title
+                        meta.artist = r.get("artistName") or meta.artist
+                        meta.album = r.get("collectionName") or meta.album
+                        meta.track_number = r.get("trackNumber", meta.track_number)
+                        meta.track_total = r.get("trackCount", meta.track_total)
+                        meta.disc_number = r.get("discNumber", 1)
+                        meta.disc_total = r.get("discCount", 1)
+                        meta.genre = r.get("primaryGenreName") or meta.genre
+                        meta.duration_ms = r.get("trackTimeMillis")
 
-                    release_date = r.get("releaseDate")
-                    if release_date and len(release_date) >= 4:
-                        meta.release_year = release_date[:4]
+                        release_date = r.get("releaseDate")
+                        if release_date and len(release_date) >= 4:
+                            meta.release_year = release_date[:4]
 
-                    raw_art = r.get("artworkUrl100")
-                    if raw_art:
-                        meta.artwork_url = raw_art.replace("100x100bb.jpg", f"{artwork_size}x{artwork_size}bb.jpg")
-        except Exception as e:
-            logger.warning(f"Metadata lookup failed for '{query}': {e}")
+                        raw_art = r.get("artworkUrl100")
+                        if raw_art:
+                            meta.artwork_url = raw_art.replace("100x100bb.jpg", f"{artwork_size}x{artwork_size}bb.jpg")
+            except Exception as e:
+                logger.debug(f"Catalog fallback lookup for '{query}': {e}")
 
         # Fetch artwork binary if available
         if meta.artwork_url:
             try:
-                art_req = urllib.request.Request(meta.artwork_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
+                art_req = urllib.request.Request(meta.artwork_url, headers=cls.HEADERS)
                 with urllib.request.urlopen(art_req, timeout=10) as art_res:
                     meta.artwork_data = art_res.read()
             except Exception as e:
-                logger.warning(f"Failed to download artwork from {meta.artwork_url}: {e}")
+                logger.debug(f"Artwork download skipped from {meta.artwork_url}: {e}")
 
         return meta

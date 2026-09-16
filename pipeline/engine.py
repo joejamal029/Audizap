@@ -1,4 +1,4 @@
-﻿"""
+"""
 Parallel Execution Engine.
 Manages the concurrent processing of tracks across worker threads.
 Each track autonomously executes:
@@ -52,6 +52,10 @@ class PipelineEngine:
             query=query,
             fallback_artist=artist,
             fallback_title=title,
+            fallback_album=song_item.get("album", ""),
+            fallback_artwork_url=song_item.get("artwork_url"),
+            fallback_release_year=song_item.get("release_year"),
+            fallback_track_number=song_item.get("track_number", 1),
             artwork_size=self.config.artwork_size
         )
 

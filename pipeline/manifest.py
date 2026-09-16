@@ -79,6 +79,34 @@ class ManifestParser:
         elif "duration_ms" in data:
             duration_ms = data.get("duration_ms", 0)
 
+        # Album, Cover Art, Year, Track Number
+        album_name = ""
+        artwork_url = None
+        release_year = None
+        track_number = data.get("trackNumber", 1)
+
+        album_data = data.get("albumOfTrack") or data.get("album")
+        if isinstance(album_data, dict):
+            album_name = album_data.get("name", "")
+            date_info = album_data.get("date", {})
+            if isinstance(date_info, dict) and "isoString" in date_info:
+                release_year = date_info["isoString"][:4]
+            elif isinstance(date_info, str) and len(date_info) >= 4:
+                release_year = date_info[:4]
+
+            cover_sources = album_data.get("coverArt", {}).get("sources", [])
+            if isinstance(cover_sources, list) and cover_sources:
+                sorted_covers = sorted(cover_sources, key=lambda c: c.get("width", 0), reverse=True)
+                artwork_url = sorted_covers[0].get("url")
+
+        if not artwork_url:
+            vis = data.get("visualIdentityTrait", {})
+            if isinstance(vis, dict):
+                sq = vis.get("squareCoverImage", {}).get("image", {}).get("data", {}).get("sources", [])
+                if isinstance(sq, list) and sq:
+                    sorted_covers = sorted(sq, key=lambda c: c.get("maxWidth", 0), reverse=True)
+                    artwork_url = sorted_covers[0].get("url")
+
         uri = data.get("uri", "")
         track_id = uri.split(":")[-1] if "track:" in uri else None
         url = f"https://open.spotify.com/track/{track_id}" if track_id else None
@@ -86,6 +114,10 @@ class ManifestParser:
         return {
             "artist": artist_str,
             "title": name,
+            "album": album_name,
+            "artwork_url": artwork_url,
+            "release_year": release_year,
+            "track_number": track_number,
             "query": f"{artist_str} - {name}" if artist_str else name,
             "url": url,
             "duration": duration_ms // 1000 if duration_ms else None

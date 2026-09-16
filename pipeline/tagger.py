@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tagging and lyrics injection engine.
 Fetches real-time synced lyrics per track and dual-embeds:
 1. Native binary SYLT (Synchronised Lyrics in milliseconds)
@@ -37,10 +37,12 @@ class Tagger:
     @classmethod
     def fetch_lyrics(cls, query: str) -> Optional[str]:
         """
-        Queries multi-source lyrics engines (Musixmatch, NetEase, Megalobiz, LRCLIB).
+        Queries reliable multi-source lyrics engines (Musixmatch, LRCLIB, NetEase).
+        Excludes dead/stalled providers (e.g. Megalobiz) and suppresses intermediate timeout noise.
         """
         try:
-            return syncedlyrics.search(query)
+            logging.getLogger("syncedlyrics").setLevel(logging.CRITICAL)
+            return syncedlyrics.search(query, providers=["musixmatch", "lrclib", "netease"])
         except Exception:
             return None
 
