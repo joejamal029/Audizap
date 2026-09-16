@@ -12,6 +12,7 @@ Rather than executing stage-by-stage across the entire batch (which causes slow 
            [Input: Spotify URL / Text Export / Query]
                               │
                     [pipeline/manifest.py]
+               (Fast Embed Extraction + Timeout Guard)
                               │
                      [Job Work Queue]
                               │
@@ -21,12 +22,13 @@ Rather than executing stage-by-stage across the entire batch (which causes slow 
           │                   │                   │
    ┌──────┴───────────────────┴───────────────────┴──────┐
    │ 1. Canonical Metadata & Square Artwork Resolution   │ (Apple Music / iTunes / Spotify CDN)
-   │ 2. Isolated Temp Directory Allocation                │ (tempfile.mkdtemp)
-   │ 3. Multi-Tier Audio Stream Retrieval                 │ (YT Music -> SoundCloud -> yt-dlp + Deno)
-   │ 4. Deterministic CBR Transcoding                     │ (FFmpeg libmp3lame 128k/320k)
-   │ 5. Move from Temp to Output Path                     │
-   │ 6. Real-Time Lyrics Search                           │ (syncedlyrics: Musixmatch / NetEase / LRCLIB)
-   │ 7. Atomic ID3 Injection                              │ (ID3v2.3: APIC + TIT2 + TCON + SYLT + USLT)
+   │ 2. Deduplication Check (Instant Skip if exists)     │ (os.path.exists check)
+   │ 3. Isolated Temp Directory Allocation                │ (tempfile.mkdtemp)
+   │ 4. Smart Multi-Tier Audio Cascade                    │ (Clean Artist Query: YT -> SC -> Generic)
+   │ 5. Deterministic CBR Transcoding                     │ (FFmpeg libmp3lame 128k/320k)
+   │ 6. Move from Temp to Output Path                     │
+   │ 7. Real-Time Lyrics Search                           │ (syncedlyrics: Musixmatch / NetEase / LRCLIB)
+   │ 8. Atomic ID3 Injection                              │ (ID3v2.3: APIC + TIT2 + TCON + SYLT + USLT)
    └─────────────────────────────────────────────────────┘
                               │
                      [Output Directory]
@@ -46,13 +48,13 @@ Audizap/
 ├── pipeline/
 │   ├── __init__.py            # Package initializer
 │   ├── config.py              # PipelineConfig dataclass
-│   ├── manifest.py            # Parses URLs, text files, and generates queue
-│   ├── metadata.py            # Catalog resolver, Apple Music / iTunes API
-│   ├── audio.py               # AudioResolver, multi-tier fallback cascade
+│   ├── manifest.py            # Fast Spotify Embed & text manifest parser
+│   ├── metadata.py            # Canonical catalog resolver (Apple Music/iTunes API)
+│   ├── audio.py               # AudioResolver, cascaded multi-tier audio search
 │   ├── transcoder.py          # Transcoder, FFmpeg CBR normalization
 │   ├── tagger.py              # Tagger, mutagen ID3v2.3, APIC, SYLT & USLT
 │   └── engine.py              # PipelineEngine, ThreadPoolExecutor orchestrator
-├── README.md                  # User-facing manual & usage guide
+├── README.md                  # User-facing manual & benchmark summary
 └── READMEDEV.md               # Developer documentation & extension guide
 ```
 
@@ -76,38 +78,47 @@ Defines `PipelineConfig` containing all mutable configuration parameters:
 - `bitrate`: Default `128k` (or `320k`).
 - `sample_rate`: `44100` Hz standard.
 - `workers`: Default `4` concurrent threads.
-- `duration_tolerance`: Allowed deviation in seconds (default `25`s).
+- `duration_tolerance`: Allowed deviation in seconds.
 - `embed_lyrics`: Boolean toggle for lyrics enrichment.
 - `embed_artwork`: Boolean toggle for square cover art.
+- `overwrite_existing`: Boolean flag to force re-download of existing tracks.
 
-### 3. `pipeline/metadata.py` (`MetadataResolver`)
+### 3. `pipeline/manifest.py` (`ManifestParser`)
+- Uses direct Spotify Embed JSON scraping (`__NEXT_DATA__`) with strict 8-second timeouts.
+- Never blocks or loops infinitely on deleted, 404, or private playlist links.
+- Parses `.txt` tracklists formatted as `Artist - Title` seamlessly.
+
+### 4. `pipeline/metadata.py` (`MetadataResolver`)
 - Queries `https://itunes.apple.com/search`.
 - **Zero API Key Requirement**: Requires no OAuth tokens, developer registrations, or secret keys.
+- **Modern User-Agent**: Configured with a modern desktop browser user-agent to prevent CDN `403 Forbidden` firewall blocks.
 - **Canonical Decoupling**: Extracts `trackName`, `artistName`, `collectionName`, `trackNumber`, `trackCount`, `discNumber`, and `primaryGenreName`.
 - **Artwork CDN Resizing**: Converts standard `100x100bb.jpg` thumbnail links to high-res `1000x1000bb.jpg` square uncompressed images.
 
-### 4. `pipeline/audio.py` (`AudioResolver`)
+### 5. `pipeline/audio.py` (`AudioResolver`)
 Implements an ordered, resilient cascade:
-- **Tier 1**: YouTube Direct Audio Query (`ytsearch1:{query} audio`).
-- **Tier 2**: SoundCloud Search (`scsearch1:{query}`).
-- **Tier 3**: Generic Fallback (`ytsearch1:{query}`).
-- **Duration Gating**: Filters out streams where duration deviates by more than `±tolerance` seconds.
-- **Deno Integration**: Leverages `~/.spotdl/deno.exe` to decode modern YouTube bot-challenges (visionOS, player cipher tokens).
+- **Query Sanitization**: Automatically strips excessive featured artists and brackets (e.g. `Artist1, Artist2 - Title (feat. X)` becomes `Artist1 Title`) to match search algorithms reliably.
+- **Tier 1**: YouTube Search with clean query (`ytsearch1:{clean_query} audio`).
+- **Tier 2**: Direct YouTube Search (`ytsearch1:{clean_query}`).
+- **Tier 3**: SoundCloud Search (`scsearch1:{clean_query}`).
+- **Tier 4**: Broad YouTube Search with original query.
+- **Robust Python Invocation**: Uses `sys.executable -m yt_dlp` to ensure immunity to virtual environment relocations.
 
-### 5. `pipeline/transcoder.py` (`Transcoder`)
+### 6. `pipeline/transcoder.py` (`Transcoder`)
 - Invokes `ffmpeg -c:a libmp3lame -b:a {bitrate} -ar {sample_rate}`.
 - Enforces uniform Constant Bitrate (CBR) audio regardless of whether the source stream was Opus 251, AAC 140, or MP3.
 
-### 6. `pipeline/tagger.py` (`Tagger`)
+### 7. `pipeline/tagger.py` (`Tagger`)
 - **Sanitization**: Calls `id3.delete()` to completely wipe dirty source platform tags (channel names, video titles with `(MV)`, `Gaming` genres).
 - **ID3v2.3 Specification**: Uses `v2_version=3` for universal compatibility across Windows Explorer, macOS, iOS, Android, and car audio systems.
 - **Dual Lyrics Engine**:
   - `SYLT`: Binary ID3 synchronized lyrics tag in milliseconds (`format=2, type=1`).
   - `USLT`: Text lyrics frame populated with LRC timestamps `[mm:ss.xx]`.
 
-### 7. `pipeline/engine.py` (`PipelineEngine`)
+### 8. `pipeline/engine.py` (`PipelineEngine`)
 - Manages `concurrent.futures.ThreadPoolExecutor`.
-- Provides **Thread-Safe Temp Isolation**: Every worker creates its own isolated directory via `tempfile.mkdtemp(prefix="audio_stream_")`, preventing filename collisions when processing multiple songs by the same artist concurrently.
+- Provides **Thread-Safe Temp Isolation**: Every worker creates its own isolated directory via `tempfile.mkdtemp(prefix="audio_stream_")`.
+- **Smart Deduplication**: Immediately skips existing files without touching audio providers.
 
 ---
 
@@ -117,7 +128,7 @@ Implements an ordered, resilient cascade:
 In `pipeline/audio.py`, add your new tier to `download_stream()`:
 ```python
 # New Tier: Bandcamp search
-success = self._run_ytdlp(f"bcsearch1:{query}", output_template, duration_sec, tolerance)
+success = self._run_ytdlp(f"bcsearch1:{simplified}", output_template)
 if success:
     return True, "Bandcamp"
 ```
@@ -136,7 +147,6 @@ def fetch_lyrics(cls, query: str) -> Optional[str]:
         pass
 
     # 2. Custom Fallback Provider
-    # return custom_provider_fetch(query)
     return None
 ```
 
