@@ -6,16 +6,35 @@ Manifest parser supporting:
 """
 import re
 import os
-from typing import List, Dict, Tuple
-from spotdl.utils.spotify import SpotifyClient
-from spotdl.types.playlist import Playlist
-from spotdl.types.album import Album
-from spotdl.types.song import Song
-from spotdl.console.entry_point import parse_arguments, create_settings
+import logging
+from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 class ManifestParser:
     @staticmethod
-    def parse_input(source: str) -> List[Dict[str, str]]:
+    def _init_spotify():
+        """Initialize spotdl SpotifyClient safely without triggering spotdl CLI argument parsing."""
+        try:
+            from spotdl.utils.config import get_config
+            from spotdl.utils.spotify import SpotifyClient
+
+            config = get_config()
+            spotify_keys = [
+                'client_id', 'client_secret', 'user_auth', 'no_cache',
+                'headless', 'max_retries', 'use_cache_file', 'use_official_api',
+                'auth_token', 'cache_path'
+            ]
+            spotify_settings = {k: config[k] for k in spotify_keys if k in config}
+            try:
+                SpotifyClient.init(**spotify_settings)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"Could not initialize SpotifyClient: {e}")
+
+    @classmethod
+    def parse_input(cls, source: str) -> List[Dict[str, any]]:
         """
         Takes a file path, Spotify URL, or text query and returns a list of song dicts:
         [{'artist': str, 'title': str, 'query': str, 'url': Optional[str], 'duration': Optional[int]}]
@@ -46,13 +65,10 @@ class ManifestParser:
         # 2. Spotify URL input
         if "open.spotify.com" in source:
             try:
-                # Initialize spotdl client if needed
-                arguments = parse_arguments()
-                spotify_settings, _, _ = create_settings(arguments)
-                try:
-                    SpotifyClient.init(**spotify_settings)
-                except Exception:
-                    pass
+                cls._init_spotify()
+                from spotdl.types.playlist import Playlist
+                from spotdl.types.album import Album
+                from spotdl.types.song import Song
 
                 if "playlist" in source:
                     pl = Playlist.from_url(source)
@@ -85,10 +101,9 @@ class ManifestParser:
                     })
                 return songs
             except Exception as e:
-                # Fallback: if Spotify API limits trigger, return source as a search query
-                pass
+                logger.warning(f"Failed to fetch Spotify playlist metadata via spotdl: {e}")
 
-        # 3. Direct query
+        # 3. Direct query fallback
         if " - " in source:
             parts = source.split(" - ", 1)
             artist, title = parts[0].strip(), parts[1].strip()
