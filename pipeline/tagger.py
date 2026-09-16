@@ -8,7 +8,7 @@ Fetches real-time synced lyrics per track and dual-embeds:
 import re
 import os
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, TPOS, TDRC, TCON, APIC, USLT, SYLT, Encoding
 import syncedlyrics
 from .metadata import CanonicalMetadata
@@ -45,6 +45,138 @@ class Tagger:
             return syncedlyrics.search(query, providers=["musixmatch", "lrclib", "netease"])
         except Exception:
             return None
+
+    @classmethod
+    def inspect_file(cls, filepath: str) -> Dict[str, any]:
+        """
+        Inspects an existing audio file for metadata and embedded elements:
+        - title, artist, album
+        - has_art (APIC frame with valid image data)
+        - has_lyrics (USLT or SYLT frame)
+        - art_bytes (size of cover art)
+        """
+        info = {
+            "title": "",
+            "artist": "",
+            "album": "",
+            "has_art": False,
+            "has_lyrics": False,
+            "art_bytes": 0,
+            "query": ""
+        }
+        try:
+            id3 = ID3(filepath)
+            info["title"] = str(id3.get("TIT2", "")).strip()
+            info["artist"] = str(id3.get("TPE1", "")).strip()
+            info["album"] = str(id3.get("TALB", "")).strip()
+
+            # APIC check
+            for k, v in id3.items():
+                if k.startswith("APIC") and hasattr(v, "data") and len(v.data) > 100:
+                    info["has_art"] = True
+                    info["art_bytes"] = len(v.data)
+                    break
+
+            # Lyrics check
+            for k in id3.keys():
+                if k.startswith("USLT") or k.startswith("SYLT"):
+                    info["has_lyrics"] = True
+                    break
+        except Exception:
+            pass
+
+        # Fallback to filename parsing if ID3 tags are missing
+        if not info["title"]:
+            base = os.path.splitext(os.path.basename(filepath))[0]
+            if " - " in base:
+                parts = base.split(" - ", 1)
+                info["artist"] = parts[0].strip()
+                info["title"] = parts[1].strip()
+            else:
+                info["title"] = base
+
+        if info["artist"] and info["title"]:
+            info["query"] = f"{info['artist']} - {info['title']}"
+        else:
+            info["query"] = info["title"]
+
+        return info
+
+    @classmethod
+    def enrich_file(
+        cls,
+        filepath: str,
+        meta: CanonicalMetadata,
+        update_art: bool = True,
+        update_lyrics: bool = True
+    ) -> Dict[str, bool]:
+        """
+        Enriches an existing audio file in-place without re-encoding audio or wiping unrelated tags.
+        Updates missing/requested APIC cover art and SYLT/USLT lyrics.
+        """
+        result = {"art_added": False, "lyrics_added": False}
+        try:
+            try:
+                id3 = ID3(filepath)
+            except Exception:
+                id3 = ID3()
+
+            # Ensure basic canonical titles are set if missing
+            if not id3.get("TIT2") and meta.title:
+                id3.add(TIT2(encoding=Encoding.UTF8, text=meta.title))
+            if not id3.get("TPE1") and meta.artist:
+                id3.add(TPE1(encoding=Encoding.UTF8, text=meta.artist))
+            if not id3.get("TALB") and meta.album:
+                id3.add(TALB(encoding=Encoding.UTF8, text=meta.album))
+
+            # 1. Update Artwork
+            if update_art and meta.artwork_data:
+                apic_keys = [k for k in id3.keys() if k.startswith("APIC")]
+                for k in apic_keys:
+                    del id3[k]
+                id3.add(APIC(
+                    encoding=Encoding.UTF8,
+                    mime="image/jpeg",
+                    type=3,
+                    desc="Cover",
+                    data=meta.artwork_data
+                ))
+                result["art_added"] = True
+
+            # 2. Update Lyrics
+            if update_lyrics:
+                lyrics_text = cls.fetch_lyrics(f"{meta.artist} - {meta.title}")
+                if not lyrics_text and meta.title != meta.artist:
+                    lyrics_text = cls.fetch_lyrics(f"{meta.title}")
+
+                if lyrics_text:
+                    uslt_keys = [k for k in id3.keys() if k.startswith("USLT")]
+                    for k in uslt_keys:
+                        del id3[k]
+                    id3.add(USLT(encoding=Encoding.UTF8, lang="eng", desc="", text=lyrics_text))
+
+                    sylt_entries = cls.parse_lrc_to_sylt(lyrics_text)
+                    if sylt_entries:
+                        sylt_keys = [k for k in id3.keys() if k.startswith("SYLT")]
+                        for k in sylt_keys:
+                            del id3[k]
+                        id3.add(SYLT(
+                            encoding=Encoding.UTF8,
+                            lang="eng",
+                            format=2,
+                            type=1,
+                            desc="",
+                            text=sylt_entries
+                        ))
+                    result["lyrics_added"] = True
+
+            if result["art_added"] or result["lyrics_added"]:
+                id3.save(filepath, v2_version=3)
+
+            return result
+        except Exception as e:
+            logger.error(f"Error enriching {filepath}: {e}")
+            return result
 
     @classmethod
     def tag_file(cls, filepath: str, meta: CanonicalMetadata, embed_lyrics: bool = True) -> bool:
@@ -106,3 +238,4 @@ class Tagger:
         except Exception as e:
             logger.error(f"Error tagging {filepath}: {e}")
             return False
+

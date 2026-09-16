@@ -65,8 +65,31 @@ class PipelineEngine:
 
         # 2. Check if file already exists in download folder
         if os.path.exists(target_path) and not self.config.overwrite_existing:
+            if self.config.enrich_existing:
+                inspection = self.tagger.inspect_file(target_path)
+                need_art = (not inspection["has_art"] or self.config.force_update_art) and self.config.embed_artwork
+                need_lyrics = (not inspection["has_lyrics"] or self.config.force_update_lyrics) and self.config.embed_lyrics
+
+                if need_art or need_lyrics:
+                    enrich_res = self.tagger.enrich_file(
+                        filepath=target_path,
+                        meta=meta,
+                        update_art=need_art,
+                        update_lyrics=need_lyrics
+                    )
+                    result["success"] = True
+                    result["skipped"] = False
+                    result["enriched"] = True
+                    result["art_added"] = enrich_res["art_added"]
+                    result["lyrics_added"] = enrich_res["lyrics_added"]
+                    if progress_callback:
+                        progress_callback(query, "enriched")
+                    return result
+
             result["success"] = True
             result["skipped"] = True
+            if progress_callback:
+                progress_callback(query, "skipped")
             return result
 
         # 3. Multi-tier Audio Acquisition using isolated temp dir
@@ -85,6 +108,8 @@ class PipelineEngine:
             result["error"] = "Audio stream download failed across all tiers"
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
+            if progress_callback:
+                progress_callback(query, "error")
             return result
 
         raw_downloaded = raw_files[0]
@@ -101,6 +126,8 @@ class PipelineEngine:
             result["error"] = "FFmpeg transcode failed"
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
+            if progress_callback:
+                progress_callback(query, "error")
             return result
 
         import shutil
@@ -118,7 +145,89 @@ class PipelineEngine:
         )
 
         result["success"] = tagged
+        if progress_callback:
+            progress_callback(query, "done" if tagged else "error")
         return result
+
+    def enrich_single_local_file(self, filepath: str, progress_callback: Optional[Callable] = None) -> Dict[str, any]:
+        """
+        Audits an existing local audio file on disk and enriches missing artwork or lyrics in-place.
+        """
+        inspection = self.tagger.inspect_file(filepath)
+        query = inspection.get("query") or os.path.splitext(os.path.basename(filepath))[0]
+
+        result = {
+            "file": filepath,
+            "query": query,
+            "success": True,
+            "skipped": False,
+            "enriched": False,
+            "art_added": False,
+            "lyrics_added": False,
+            "error": None
+        }
+
+        need_art = (not inspection["has_art"] or self.config.force_update_art) and self.config.embed_artwork
+        need_lyrics = (not inspection["has_lyrics"] or self.config.force_update_lyrics) and self.config.embed_lyrics
+
+        if not need_art and not need_lyrics:
+            result["skipped"] = True
+            if progress_callback:
+                progress_callback(query, "skipped")
+            return result
+
+        # Resolve metadata for the local file
+        meta = self.metadata_resolver.resolve(
+            query=query,
+            fallback_artist=inspection.get("artist", ""),
+            fallback_title=inspection.get("title", ""),
+            fallback_album=inspection.get("album", ""),
+            artwork_size=self.config.artwork_size
+        )
+
+        enrich_res = self.tagger.enrich_file(
+            filepath=filepath,
+            meta=meta,
+            update_art=need_art,
+            update_lyrics=need_lyrics
+        )
+
+        result["enriched"] = enrich_res["art_added"] or enrich_res["lyrics_added"]
+        result["art_added"] = enrich_res["art_added"]
+        result["lyrics_added"] = enrich_res["lyrics_added"]
+
+        if progress_callback:
+            status = "enriched" if result["enriched"] else "skipped"
+            progress_callback(query, status)
+
+        return result
+
+    def enrich_local_folder(self, folder_path: str, status_callback: Optional[Callable] = None) -> List[Dict[str, any]]:
+        """
+        Scans a local directory for all .mp3 files and concurrently audits/enriches missing tags in-place.
+        """
+        if not os.path.isdir(folder_path):
+            return []
+
+        mp3_files = [
+            os.path.abspath(os.path.join(folder_path, f))
+            for f in os.listdir(folder_path)
+            if f.lower().endswith(".mp3")
+        ]
+
+        if not mp3_files:
+            return []
+
+        results = []
+        with ThreadPoolExecutor(max_workers=self.config.workers) as executor:
+            futures = {
+                executor.submit(self.enrich_single_local_file, f, status_callback): f
+                for f in mp3_files
+            }
+            for future in as_completed(futures):
+                results.append(future.result())
+
+        return results
 
     def run(self, song_list: List[Dict[str, str]], status_callback: Optional[Callable] = None) -> List[Dict[str, any]]:
         os.makedirs(self.config.output_dir, exist_ok=True)
@@ -135,3 +244,4 @@ class PipelineEngine:
                 results.append(res)
 
         return results
+

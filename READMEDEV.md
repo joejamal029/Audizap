@@ -109,16 +109,21 @@ Implements an ordered, resilient cascade:
 - Enforces uniform Constant Bitrate (CBR) audio regardless of whether the source stream was Opus 251, AAC 140, or MP3.
 
 ### 7. `pipeline/tagger.py` (`Tagger`)
-- **Sanitization**: Calls `id3.delete()` to completely wipe dirty source platform tags (channel names, video titles with `(MV)`, `Gaming` genres).
+- **Sanitization**: Calls `id3.delete()` when performing initial tagging to completely wipe dirty source platform tags (channel names, video titles with `(MV)`, `Gaming` genres).
 - **ID3v2.3 Specification**: Uses `v2_version=3` for universal compatibility across Windows Explorer, macOS, iOS, Android, and car audio systems.
 - **Dual Lyrics Engine**:
   - `SYLT`: Binary ID3 synchronized lyrics tag in milliseconds (`format=2, type=1`).
   - `USLT`: Text lyrics frame populated with LRC timestamps `[mm:ss.xx]`.
+- **In-Place Inspection & Enrichment**:
+  - `inspect_file(filepath)`: Inspects existing ID3 headers for `APIC` (cover art with valid payload) and `SYLT`/`USLT` (lyrics frames) without loading full audio files.
+  - `enrich_file(filepath, meta)`: Injects missing cover art and synchronized lyrics directly into existing files on disk without touching or re-encoding audio.
 
 ### 8. `pipeline/engine.py` (`PipelineEngine`)
 - Manages `concurrent.futures.ThreadPoolExecutor`.
 - Provides **Thread-Safe Temp Isolation**: Every worker creates its own isolated directory via `tempfile.mkdtemp(prefix="audio_stream_")`.
-- **Smart Deduplication**: Immediately skips existing files without touching audio providers.
+- **Smart Deduplication & In-Place Enrichment**: Detects existing files in the download folder. If `enrich_existing=True`, audits the file: if art or lyrics are missing, it enriches them in-place; if already complete, it skips instantly.
+- **Local Folder Auditor**: `enrich_local_folder(folder_path)` discovers and audits all existing `.mp3` files in parallel across worker threads.
+
 
 ---
 

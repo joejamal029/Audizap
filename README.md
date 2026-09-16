@@ -14,9 +14,10 @@ Built to solve common music archiving pain points: missing tracks, dirty platfor
 - **🏷️ Pristine Canonical Metadata**: Resolves official catalog records (Apple Music / iTunes / Spotify CDN) *before* downloading audio. Never accepts dirty YouTube video titles, channel names as artists, or video screenshot thumbnails.
 - **🖼️ Square High-Res Cover Art**: Automatically downloads and embeds uncompressed official square album art (1000x1000).
 - **🎶 Dual-Standard In-File Lyrics**: Embeds both **binary millisecond `SYLT`** and **timestamped `USLT`** directly inside the `.mp3` file. **Zero `.lrc` companion files left behind**.
+- **🔍 Album Art & Lyrics Enricher / Auditor**: Inspects existing `.mp3` files already on your hard drive. If cover art or synchronized lyrics are missing, it fetches and embeds them in-place **without re-encoding or modifying the audio**.
 - **🔄 Smart Multi-Tier Audio Cascade**: YouTube Music $\rightarrow$ SoundCloud $\rightarrow$ Global YouTube (`yt-dlp` + Deno JS engine) with intelligent artist/title query sanitization for 100% hit rate.
 - **🎛️ Deterministic Transcoding**: Transcodes all incoming audio streams to a uniform Constant Bitrate standard (e.g., **128k CBR**, 44.1 kHz stereo) via FFmpeg.
-- **⏭️ Smart Deduplication & Instant Resume**: Automatically detects existing files in the download folder and skips them instantly (`⚡ Skipped`), downloading only missing or failed tracks on subsequent runs.
+- **⏭️ Smart Deduplication & In-Place Enrichment**: Automatically detects existing files on disk. If complete, it skips instantly (`⚡ Skipped`); if missing art or lyrics, it enriches them in-place automatically!
 - **🛡️ Uncapped Manifest Extraction**: Paginated Spotify retrieval powered by `spotapi` (fetches full playlists of 100, 500, 1,000+ tracks without Spotify's 100-song embed cap or API keys) with fast Embed API fallback.
 
 ---
@@ -55,9 +56,14 @@ Simply double-click **`Run_GUI.bat`** on Windows, or run:
 ```bash
 audizap-gui
 ```
+* **Download Mode**: Paste a Spotify URL (playlist/album/track) or choose a text file, then click **`⚡ Start Download & Pipeline`**.
+* **Enricher Mode**: Choose your music folder and click **`🔍 Audit & Enrich Existing Files`**. AudiZap will audit all `.mp3` files, find ones missing cover art or lyrics, and update them in-place!
 
 ### 2. Command-Line Interface (CLI)
 ```bash
+# Audit & enrich an existing local music folder (adds missing art & lyrics in-place):
+audizap "C:\Users\USER\Music" --enrich --workers 4
+
 # Download from a Spotify Playlist or Album:
 audizap "https://open.spotify.com/playlist/6kKAHaM396ytVUggvkM0qp" --bitrate 128k --workers 4
 
@@ -77,12 +83,13 @@ audizap "My Spotify Library.txt" --overwrite
 
 | Setting | Options / Default | Description |
 |---|---|---|
-| **Source** | Spotify URL or `.txt` file | Playlist URL, album URL, single track, or text file export |
-| **Output Folder** | Directory path (`.` by default) | Where the enriched `.mp3` files are saved |
+| **Source** | Spotify URL, Folder, or `.txt` | Playlist URL, album URL, track, local audio folder, or text export |
+| **Output Folder** | Directory path (`.` by default) | Where downloaded or enriched `.mp3` files reside |
 | **Audio Bitrate** | `128k` (Default), `192k`, `320k` | Enforced constant CBR bitrate via FFmpeg |
-| **Worker Threads** | `2`, `4` (Default), `6`, `8` | Number of simultaneous downloads and transcoders |
-| **Embed Synced Lyrics** | `True` (Checked by default) | Real-time dual-tagging of in-file millisecond `SYLT` & `USLT` |
-| **Smart Resume** | Built-in | Skips files that already exist in the target folder |
+| **Worker Threads** | `2`, `4` (Default), `6`, `8` | Number of simultaneous downloads, transcoders, or enrichers |
+| **Synced Lyrics** | `True` (Checked by default) | Real-time dual-tagging of in-file millisecond `SYLT` & `USLT` |
+| **Auto-Enrich Existing** | `True` (Checked by default) | Inspects existing files on disk and injects missing art/lyrics |
+| **Smart Resume** | Built-in | Skips files that are already complete with art and lyrics |
 
 ---
 

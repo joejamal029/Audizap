@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pipeline configuration and defaults.
 Fully customizable via CLI flags or config overrides.
 """
@@ -18,3 +18,6 @@ class PipelineConfig:
     audio_providers: List[str] = field(default_factory=lambda: ["youtube-music", "soundcloud", "youtube"])
     clean_filenames: bool = True
     overwrite_existing: bool = False
+    enrich_existing: bool = True       # In-place check & enrich of missing art/lyrics for existing files
+    force_update_art: bool = False     # Re-fetch and replace art even if present
+    force_update_lyrics: bool = False  # Re-fetch and replace lyrics even if present
