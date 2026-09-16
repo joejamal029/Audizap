@@ -51,19 +51,19 @@ spotdl --download-deno
 ### 1. Graphical Interface (GUI)
 Simply double-click **`Run_GUI.bat`** on Windows, or run:
 ```bash
-python gui.py
+audizap-gui
 ```
 
 ### 2. Command-Line Interface (CLI)
 ```bash
 # Download from a Spotify Playlist or Album:
-python cli.py "https://open.spotify.com/playlist/6kKAHaM396ytVUggvkM0qp" --bitrate 128k --workers 4
+audizap "https://open.spotify.com/playlist/6kKAHaM396ytVUggvkM0qp" --bitrate 128k --workers 4
 
 # Download from a Tracklist Text Export:
-python cli.py "My Spotify Library.txt" --output ./my_music --bitrate 128k --workers 4
+audizap "My Spotify Library.txt" --output ./my_music --bitrate 128k --workers 4
 
 # High-Fidelity 320 kbps Download:
-python cli.py "Artist - Track Name" --bitrate 320k --workers 2
+audizap "Artist - Track Name" --bitrate 320k --workers 2
 ```
 
 ---

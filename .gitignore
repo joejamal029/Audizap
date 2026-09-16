@@ -35,3 +35,5 @@ test_output/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+*.egg-info/
