@@ -164,6 +164,7 @@ class PipelineEngine:
             "enriched": False,
             "art_added": False,
             "lyrics_added": False,
+            "inspection": inspection,
             "error": None
         }
 

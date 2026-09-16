@@ -10,6 +10,12 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+try:
+    import spotapi
+    HAS_SPOTAPI = True
+except ImportError:
+    HAS_SPOTAPI = False
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -36,6 +42,47 @@ class MetadataResolver:
     }
 
     @classmethod
+    def _search_spotify(cls, query: str) -> Optional[dict]:
+        """
+        Searches Spotify's public catalog via spotapi.
+        Immunized against Apple CDN 403 blocks with full global & indie coverage.
+        """
+        if not HAS_SPOTAPI:
+            return None
+        try:
+            clean = query.replace("\xa0", " ").strip()
+            gen = spotapi.Public.song_search(clean)
+            items = next(gen)
+            if not items:
+                return None
+            first = items[0]
+            data = first.get("item", {}).get("data", {})
+            if not data:
+                return None
+
+            title = data.get("name", "")
+            artists = [a.get("profile", {}).get("name") for a in data.get("artists", {}).get("items", []) if a.get("profile", {}).get("name")]
+            artist = ", ".join(artists) if artists else ""
+            album_data = data.get("albumOfTrack", {})
+            album = album_data.get("name", "")
+
+            covers = album_data.get("coverArt", {}).get("sources", [])
+            artwork_url = None
+            if covers:
+                sorted_covers = sorted(covers, key=lambda c: c.get("width", 0), reverse=True)
+                artwork_url = sorted_covers[0].get("url")
+
+            return {
+                "title": title,
+                "artist": artist,
+                "album": album,
+                "artwork_url": artwork_url
+            }
+        except Exception as e:
+            logger.debug(f"Spotify catalog search error for '{query}': {e}")
+            return None
+
+    @classmethod
     def resolve(
         cls,
         query: str,
@@ -52,20 +99,30 @@ class MetadataResolver:
         Query official music catalog for canonical metadata and artwork.
         Prefers verified direct metadata/artwork when already provided.
         """
+        clean_query = query.replace("\xa0", " ").strip()
         meta = CanonicalMetadata(
-            title=fallback_title or query,
+            title=fallback_title or clean_query,
             artist=fallback_artist or "Unknown Artist",
-            album=fallback_album or fallback_title or query,
+            album=fallback_album or fallback_title or clean_query,
             release_year=fallback_release_year,
             artwork_url=fallback_artwork_url,
             track_number=fallback_track_number or 1,
             track_total=fallback_track_total or 1
         )
 
-        # If artwork_url is not already provided, query Apple Music / iTunes
+        # Step 1: If artwork_url is missing, query Spotify catalog (no rate limits, 100% reliable)
+        if not meta.artwork_url:
+            sp_res = cls._search_spotify(clean_query)
+            if sp_res and sp_res.get("artwork_url"):
+                meta.title = sp_res.get("title") or meta.title
+                meta.artist = sp_res.get("artist") or meta.artist
+                meta.album = sp_res.get("album") or meta.album
+                meta.artwork_url = sp_res.get("artwork_url")
+
+        # Step 2: Fallback to Apple Music / iTunes if Spotify search returned no art
         if not meta.artwork_url:
             params = {
-                "term": query,
+                "term": clean_query,
                 "entity": "song",
                 "limit": 1
             }
@@ -94,7 +151,7 @@ class MetadataResolver:
                         if raw_art:
                             meta.artwork_url = raw_art.replace("100x100bb.jpg", f"{artwork_size}x{artwork_size}bb.jpg")
             except Exception as e:
-                logger.debug(f"Catalog fallback lookup for '{query}': {e}")
+                logger.debug(f"Catalog fallback lookup for '{clean_query}': {e}")
 
         # Fetch artwork binary if available
         if meta.artwork_url:

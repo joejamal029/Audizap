@@ -361,7 +361,11 @@ class ModernDownloaderApp(ctk.CTk):
                         skipped_count += 1
                         self.log(f"✓ Already Complete (Art + Lyrics OK): {base}")
                     else:
-                        self.log(f"⚠ Could not enrich: {base}")
+                        insp = res.get("inspection", {})
+                        if insp.get("has_art"):
+                            self.log(f"ℹ No online lyrics found (Cover Art already OK): {base}")
+                        else:
+                            self.log(f"ℹ No new art or lyrics found online: {base}")
 
                     pct = completed / total
                     self.progress_bar.set(pct)
