@@ -23,7 +23,7 @@ class ModernDownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Spotify & Music Pipeline Downloader")
+        self.title("⚡ AudiZap — Music Pipeline Downloader")
         self.geometry("860x680")
         self.minsize(780, 580)
 
@@ -40,7 +40,7 @@ class ModernDownloaderApp(ctk.CTk):
 
         title_lbl = ctk.CTkLabel(
             header_frame,
-            text="🎵 Music Pipeline Downloader",
+            text="⚡ AudiZap Downloader",
             font=ctk.CTkFont(size=22, weight="bold"),
             text_color="#1DB954"
         )

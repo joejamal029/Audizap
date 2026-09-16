@@ -1,4 +1,4 @@
-﻿# 🎵 Music Pipeline Downloader & Metadata Vault
+﻿# ⚡ AudiZap — Parallel Music Downloader & Metadata Pipeline
 
 A modular, high-performance, parallel music downloading and metadata enrichment system that achieves **100% download and enrichment rate** across Spotify playlists, album URLs, and raw tracklist text exports.
 
@@ -29,8 +29,8 @@ Built to solve common music archiving pain points: missing tracks, dirty platfor
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/<YOUR_USERNAME>/spotify_downloader.git
-cd spotify_downloader
+git clone https://github.com/joejamal029/Audizap.git
+cd Audizap
 
 # Set up virtual environment
 python -m venv venv

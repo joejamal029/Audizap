@@ -31,7 +31,7 @@ def main():
 
     args = parser.parse_args()
 
-    console.print(f"[bold cyan]Music Downloader & Pipeline Engine[/bold cyan]")
+    console.print(f"[bold cyan]⚡ AudiZap — Music Pipeline Downloader[/bold cyan]")
     console.print(f"[green]Target Bitrate:[/green] {args.bitrate} CBR | [green]Workers:[/green] {args.workers} | [green]Output:[/green] {os.path.abspath(args.output)}\n")
 
     # Step 1: Parse Manifest
