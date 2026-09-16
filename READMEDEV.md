@@ -1,4 +1,4 @@
-﻿# Developer Documentation: Architecture & Internals (`READMEDEV.md`)
+# Developer Documentation: Architecture & Internals (`READMEDEV.md`)
 
 This document details the internal architecture, lifecycle flow, module breakdown, and extension points for developers contributing to or adapting **AudiZap**.
 
@@ -11,27 +11,27 @@ Rather than executing stage-by-stage across the entire batch (which causes slow 
 ```
            [Input: Spotify URL / Text Export / Query]
                               │
-                    [pipeline/manifest.py]
-               (Fast Embed Extraction + Timeout Guard)
+                     [pipeline/manifest.py]
+         (Paginated spotapi Extraction + Embed Fallback)
+                               │
+                      [Job Work Queue]
                               │
-                     [Job Work Queue]
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-    Worker Thread 1     Worker Thread 2     Worker Thread N
-          │                   │                   │
-   ┌──────┴───────────────────┴───────────────────┴──────┐
-   │ 1. Canonical Metadata & Square Artwork Resolution   │ (Apple Music / iTunes / Spotify CDN)
-   │ 2. Deduplication Check (Instant Skip if exists)     │ (os.path.exists check)
-   │ 3. Isolated Temp Directory Allocation                │ (tempfile.mkdtemp)
-   │ 4. Smart Multi-Tier Audio Cascade                    │ (Clean Artist Query: YT -> SC -> Generic)
-   │ 5. Deterministic CBR Transcoding                     │ (FFmpeg libmp3lame 128k/320k)
-   │ 6. Move from Temp to Output Path                     │
-   │ 7. Real-Time Lyrics Search                           │ (syncedlyrics: Musixmatch / NetEase / LRCLIB)
-   │ 8. Atomic ID3 Injection                              │ (ID3v2.3: APIC + TIT2 + TCON + SYLT + USLT)
-   └─────────────────────────────────────────────────────┘
-                              │
-                     [Output Directory]
+           ┌───────────────────┼───────────────────┐
+           ▼                   ▼                   ▼
+     Worker Thread 1     Worker Thread 2     Worker Thread N
+           │                   │                   │
+    ┌──────┴───────────────────┴───────────────────┴──────┐
+    │ 1. Canonical Metadata & Square Artwork Resolution   │ (Apple Music / iTunes / Spotify CDN)
+    │ 2. Deduplication Check (Instant Skip if exists)     │ (os.path.exists check)
+    │ 3. Isolated Temp Directory Allocation                │ (tempfile.mkdtemp)
+    │ 4. Smart Multi-Tier Audio Cascade                    │ (Clean Artist Query: YT -> SC -> Generic)
+    │ 5. Deterministic CBR Transcoding                     │ (FFmpeg libmp3lame 128k/320k)
+    │ 6. Move from Temp to Output Path                     │
+    │ 7. Real-Time Lyrics Search                           │ (syncedlyrics: Musixmatch / NetEase / LRCLIB)
+    │ 8. Atomic ID3 Injection                              │ (ID3v2.3: APIC + TIT2 + TCON + SYLT + USLT)
+    └─────────────────────────────────────────────────────┘
+                               │
+                      [Output Directory]
 ```
 
 ---
@@ -48,7 +48,7 @@ Audizap/
 ├── pipeline/
 │   ├── __init__.py            # Package initializer
 │   ├── config.py              # PipelineConfig dataclass
-│   ├── manifest.py            # Fast Spotify Embed & text manifest parser
+│   ├── manifest.py            # Uncapped paginated Spotify & text manifest parser
 │   ├── metadata.py            # Canonical catalog resolver (Apple Music/iTunes API)
 │   ├── audio.py               # AudioResolver, cascaded multi-tier audio search
 │   ├── transcoder.py          # Transcoder, FFmpeg CBR normalization
@@ -84,9 +84,9 @@ Defines `PipelineConfig` containing all mutable configuration parameters:
 - `overwrite_existing`: Boolean flag to force re-download of existing tracks.
 
 ### 3. `pipeline/manifest.py` (`ManifestParser`)
-- Uses direct Spotify Embed JSON scraping (`__NEXT_DATA__`) with strict 8-second timeouts.
-- Never blocks or loops infinitely on deleted, 404, or private playlist links.
-- Parses `.txt` tracklists formatted as `Artist - Title` seamlessly.
+- **Uncapped Pagination**: Uses `spotapi.PublicPlaylist` and `spotapi.PublicAlbum` pagination generators to retrieve complete tracklists of any size (e.g. 116, 500, 1,000+ songs) without requiring Spotify API developer credentials.
+- **Fail-Safe Fallback**: Automatically falls back to Spotify Embed API (`__NEXT_DATA__`) with strict 8-second timeout guards if pagination encounters network limits or for single track links.
+- **Plaintext Support**: Parses `.txt` tracklists formatted as `Artist - Title` or single queries seamlessly.
 
 ### 4. `pipeline/metadata.py` (`MetadataResolver`)
 - Queries `https://itunes.apple.com/search`.

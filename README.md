@@ -1,4 +1,4 @@
-﻿# ⚡ AudiZap — Parallel Music Downloader & Metadata Pipeline
+# ⚡ AudiZap — Parallel Music Downloader & Metadata Pipeline
 
 A modular, high-performance, parallel music downloading and metadata enrichment system that achieves **100% download and enrichment rate** across Spotify playlists, album URLs, and raw tracklist text exports.
 
@@ -17,7 +17,7 @@ Built to solve common music archiving pain points: missing tracks, dirty platfor
 - **🔄 Smart Multi-Tier Audio Cascade**: YouTube Music $\rightarrow$ SoundCloud $\rightarrow$ Global YouTube (`yt-dlp` + Deno JS engine) with intelligent artist/title query sanitization for 100% hit rate.
 - **🎛️ Deterministic Transcoding**: Transcodes all incoming audio streams to a uniform Constant Bitrate standard (e.g., **128k CBR**, 44.1 kHz stereo) via FFmpeg.
 - **⏭️ Smart Deduplication & Instant Resume**: Automatically detects existing files in the download folder and skips them instantly (`⚡ Skipped`), downloading only missing or failed tracks on subsequent runs.
-- **🛡️ Robust Manifest Extraction**: Fast, non-blocking Spotify Embed resolver with strict timeout guards that prevents freezing on private or 404 links.
+- **🛡️ Uncapped Manifest Extraction**: Paginated Spotify retrieval powered by `spotapi` (fetches full playlists of 100, 500, 1,000+ tracks without Spotify's 100-song embed cap or API keys) with fast Embed API fallback.
 
 ---
 
