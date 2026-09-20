@@ -27,7 +27,7 @@ class PipelineEngine:
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.metadata_resolver = MetadataResolver()
-        self.audio_resolver = AudioResolver()
+        self.audio_resolver = AudioResolver(cookie_file=self.config.cookie_file)
         self.transcoder = Transcoder()
         self.tagger = Tagger()
         os.makedirs(self.config.output_dir, exist_ok=True)

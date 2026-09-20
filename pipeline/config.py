@@ -21,3 +21,4 @@ class PipelineConfig:
     enrich_existing: bool = True       # In-place check & enrich of missing art/lyrics for existing files
     force_update_art: bool = False     # Re-fetch and replace art even if present
     force_update_lyrics: bool = False  # Re-fetch and replace lyrics even if present
+    cookie_file: Optional[str] = None  # Explicit path to Netscape-format cookies.txt

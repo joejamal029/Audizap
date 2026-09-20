@@ -30,6 +30,9 @@ test_output/
 *.tmp
 *.bak
 .spotdl-cache/
+cookies.txt
+*cookies*.txt
+cookies/
 
 # OS & Editor
 .vscode/

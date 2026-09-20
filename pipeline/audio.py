@@ -32,14 +32,45 @@ FORBIDDEN_DERIVATIVE_WORDS = [
 ]
 
 class AudioResolver:
-    def __init__(self, ytdlp_path: Optional[str] = None):
+    def __init__(self, ytdlp_path: Optional[str] = None, cookie_file: Optional[str] = None):
         self.python_exe = sys.executable
+        self.cookie_file = cookie_file
         self.ytmusic = None
         if HAS_YTMUSIC:
             try:
                 self.ytmusic = YTMusic()
             except Exception as e:
                 logger.debug(f"YTMusic init skipped: {e}")
+
+    def get_cookie_file(self) -> Optional[str]:
+        """
+        Resolves the absolute path to a valid cookies.txt file.
+        Searches:
+        1. Explicitly configured path (self.cookie_file)
+        2. Environment variables (AUDIZAP_COOKIES, YTDLP_COOKIES)
+        3. Project root directory (alongside pipeline/)
+        4. Current working directory
+        5. User config directories (~/.config/yt-dlp/cookies.txt, ~/cookies.txt)
+        """
+        candidates = []
+        if self.cookie_file:
+            candidates.append(self.cookie_file)
+
+        env_cookie = os.environ.get("AUDIZAP_COOKIES") or os.environ.get("YTDLP_COOKIES")
+        if env_cookie:
+            candidates.append(env_cookie)
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates.append(os.path.join(project_root, "cookies.txt"))
+        candidates.append(os.path.join(os.getcwd(), "cookies.txt"))
+        candidates.append(os.path.expanduser("~/.config/yt-dlp/cookies.txt"))
+        candidates.append(os.path.expanduser("~/cookies.txt"))
+
+        for path in candidates:
+            if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+                return os.path.abspath(path)
+
+        return None
 
     def _clean_query(self, query: str) -> str:
         # If query has multiple artists e.g. "Artist1, Artist2, Artist3 - Title", simplify to "Artist1 - Title"
@@ -172,6 +203,10 @@ class AudioResolver:
             "--print", "%(id)s\t%(title)s\t%(duration)s\t%(channel)s",
             "--no-warnings"
         ]
+        cookie_path = self.get_cookie_file()
+        if cookie_path:
+            cmd.extend(["--cookies", cookie_path])
+
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, _ = p.communicate()
         raw_text = out.decode("utf-8", errors="replace").strip()
@@ -247,16 +282,13 @@ class AudioResolver:
             "--audio-quality", "0",
             "-o", output_template,
             "--no-playlist",
+            "--retries", "3",
+            "--fragment-retries", "3",
             "--no-warnings",
             "--quiet"
         ]
 
-        cookie_candidates = [
-            os.path.join(os.getcwd(), "cookies.txt"),
-            os.path.expanduser("~/.config/yt-dlp/cookies.txt"),
-            os.path.expanduser("~/cookies.txt")
-        ]
-        cookie_path = next((p for p in cookie_candidates if os.path.exists(p)), None)
+        cookie_path = self.get_cookie_file()
         if cookie_path:
             cmd.extend(["--cookies", cookie_path])
 

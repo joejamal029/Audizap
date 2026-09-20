@@ -46,13 +46,26 @@ class ModernDownloaderApp(ctk.CTk):
         )
         title_lbl.pack(side="left", padx=16, pady=12)
 
+        from pipeline.audio import AudioResolver
+        cookie_path = AudioResolver().get_cookie_file()
+        auth_text = f"🔒 Auth: {os.path.basename(cookie_path)}" if cookie_path else "🔓 Auth: Guest"
+        auth_color = "#1DB954" if cookie_path else "#E5A93C"
+
+        self.auth_lbl = ctk.CTkLabel(
+            header_frame,
+            text=auth_text,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=auth_color
+        )
+        self.auth_lbl.pack(side="right", padx=(8, 16), pady=12)
+
         subtitle_lbl = ctk.CTkLabel(
             header_frame,
             text="Canonical Metadata • Multi-Tier Fallback • Synced In-File Lyrics",
             font=ctk.CTkFont(size=12),
             text_color="#AAAAAA"
         )
-        subtitle_lbl.pack(side="right", padx=16, pady=12)
+        subtitle_lbl.pack(side="right", padx=8, pady=12)
 
         # 2. Main Input & Settings Card
         settings_frame = ctk.CTkFrame(self, corner_radius=10)
@@ -402,6 +415,11 @@ class ModernDownloaderApp(ctk.CTk):
                 overwrite_existing=False
             )
             engine = PipelineEngine(config)
+            auth_file = engine.audio_resolver.get_cookie_file()
+            if auth_file:
+                self.log(f"🔒 Authenticated Session: Using {os.path.basename(auth_file)}")
+            else:
+                self.log("🔓 Session: Anonymous (Guest)")
 
             completed = 0
             successful = 0

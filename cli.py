@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--no-lyrics", action="store_true", help="Disable real-time synchronized lyrics embedding")
     parser.add_argument("--no-enrich-existing", action="store_true", help="Disable automatic in-place enrichment of existing files during downloads")
     parser.add_argument("--overwrite", action="store_true", help="Force re-download and re-tagging of existing files")
+    parser.add_argument("--cookies", "-c", default=None, help="Path to Netscape-format cookies.txt file for authenticated downloads (default: auto-detected)")
 
     args = parser.parse_args()
 
@@ -50,7 +51,8 @@ def main():
             output_dir=folder,
             workers=args.workers,
             embed_lyrics=not args.no_lyrics,
-            enrich_existing=True
+            enrich_existing=True,
+            cookie_file=args.cookies
         )
         engine = PipelineEngine(config)
 
@@ -107,7 +109,6 @@ def main():
 
     # Standard Download Mode
     console.print(f"[bold cyan]⚡ AudiZap — Music Pipeline Downloader[/bold cyan]")
-    console.print(f"[green]Target Bitrate:[/green] {args.bitrate} CBR | [green]Workers:[/green] {args.workers} | [green]Output:[/green] {os.path.abspath(args.output)}\n")
 
     # Step 1: Parse Manifest
     console.print(f"[yellow]Loading tracks from:[/yellow] {args.source}...")
@@ -127,9 +128,15 @@ def main():
         workers=args.workers,
         embed_lyrics=not args.no_lyrics,
         enrich_existing=not args.no_enrich_existing,
-        overwrite_existing=args.overwrite
+        overwrite_existing=args.overwrite,
+        cookie_file=args.cookies
     )
     engine = PipelineEngine(config)
+
+    auth_file = engine.audio_resolver.get_cookie_file()
+    auth_badge = f"[bold green]🔒 Active ({os.path.basename(auth_file)})[/bold green]" if auth_file else "[yellow]🔓 Anonymous (Guest)[/yellow]"
+    console.print(f"[green]Target Bitrate:[/green] {args.bitrate} CBR | [green]Workers:[/green] {args.workers} | [green]Auth:[/green] {auth_badge}")
+    console.print(f"[green]Output Directory:[/green] {os.path.abspath(args.output)}\n")
 
     # Step 3: Run with Interactive Progress Bar
     start_time = time.perf_counter()
