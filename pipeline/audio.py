@@ -121,10 +121,15 @@ class AudioResolver:
             score += 60.0
         if any(k in c_title_lower for k in ["(official audio)", "[official audio]", "official audio"]):
             score += 50.0
-        elif any(k in c_title_lower for k in ["official music video", "official video"]):
-            score += 30.0
-        elif any(k in c_title_lower for k in ["lyric video", "lyrics"]):
-            score += 25.0
+        elif any(k in c_title_lower for k in ["official lyric video", "lyric video", "lyrics"]):
+            score += 35.0
+        elif any(k in c_title_lower for k in ["official music video", "official video", "music video", " mv"]):
+            # Music videos frequently contain non-musical intros, sound effects, movie dialogues, or skits.
+            # Only give a minimal boost if duration closely matches studio catalog; penalize if duration drifts.
+            if target_duration and cand_duration and abs(cand_duration - target_duration) > 4:
+                score -= 30.0
+            else:
+                score += 5.0
 
         # 4. Title similarity
         clean_t = re.sub(r"[^a-z0-9\u4e00-\u9fff\s]", " ", t_title_lower).strip()

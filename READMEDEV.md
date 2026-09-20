@@ -105,7 +105,11 @@ Implements an authenticated, scored multi-tier audio cascade with anti-live defe
 - **Tier 2 (Scored Multi-Candidate Search `ytsearch5`)**:
   - **Negative Live Penalty (-100 pts)**: Disqualifies `"live"`, `"concert"`, `"livehouse"`, `"performance"`, `"现场"`, `"acoustic session"` (unless explicitly requested in track title).
   - **Derivative Penalty (-60 pts)**: Penalizes `"cover"`, `"remix"`, `"tribute"`, `"karaoke"`, `"slowed"`, `"reverb"`.
-  - **Official Studio Boosts**: Grants score boosts for artist topic channels (`"- Topic"`, +60 pts), `"(Official Audio)"` (+50 pts), and official music videos (+30 pts).
+  - **Studio Audio Prioritization Over Music Videos**:
+    - **Topic Channels (`"- Topic"`)**: +60 pts (Official record label unedited album audio).
+    - **Official Audio (`"(Official Audio)"`)**: +50 pts (Pure album master without visual artifacts).
+    - **Lyric Videos (`"Lyric Video"`, `"Lyrics"`)**: +35 pts (Exact album audio synced to lyrics; avoids movie scenes or dialogue).
+    - **Music Videos (`"Official Music Video"`, `"MV"`)**: Minimal +5 pts only if duration matches studio catalog ($\le 4$s); **-30 pts penalty** if duration drifts ($> 4$s) to filter out extended intro skits, cinematic sound effects, or movie dialogues.
   - **Duration Gating**: Rewards $\le 3$s catalog duration matching (+40 pts) and severely penalizes length drift $> 35$s (-80 pts).
 - **Tier 3 (SoundCloud Search `scsearch1`)**: Resilient secondary streaming fallback.
 - **Tier 4 (Broad Search)**: Fallback using the original query.
