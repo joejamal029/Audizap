@@ -10,6 +10,8 @@ import json
 import logging
 import urllib.request
 import urllib.parse
+import sys
+import subprocess
 from typing import List, Dict, Optional
 
 try:
@@ -211,6 +213,71 @@ class ManifestParser:
             return None
 
     @classmethod
+    def _fetch_youtube_tracks(cls, url: str) -> List[Dict[str, any]]:
+        """
+        Extracts video metadata from a YouTube video or playlist URL.
+        """
+        cmd = [
+            sys.executable,
+            "-m", "yt_dlp",
+            "--dump-json",
+            "--flat-playlist",
+            "--no-warnings",
+            url
+        ]
+        try:
+            from .audio import AudioResolver
+            cookie_path = AudioResolver().get_cookie_file()
+            if cookie_path:
+                cmd.extend(["--cookies", cookie_path])
+        except Exception:
+            pass
+
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, _ = proc.communicate()
+            raw_text = out.decode("utf-8", errors="replace").strip()
+            if not raw_text:
+                return []
+
+            tracks = []
+            for line in raw_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    title = data.get("title", "")
+                    uploader = data.get("uploader") or data.get("channel", "")
+                    duration = data.get("duration")
+                    vid_id = data.get("id")
+                    vid_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else data.get("url", url)
+
+                    # Clean artist and title
+                    artist = uploader
+                    clean_title = title
+                    if " - " in title:
+                        parts = title.split(" - ", 1)
+                        artist = parts[0].strip()
+                        clean_title = parts[1].strip()
+
+                    clean_title = re.sub(r"[\(\[\{].*?(official|video|audio|lyrics|hd|4k|mv).*?[\)\]\}]", "", clean_title, flags=re.IGNORECASE).strip()
+
+                    tracks.append({
+                        "artist": artist,
+                        "title": clean_title,
+                        "query": f"{artist} - {clean_title}" if artist else clean_title,
+                        "url": vid_url,
+                        "duration": int(duration) if duration else None
+                    })
+                except Exception:
+                    continue
+            return tracks
+        except Exception as e:
+            logger.warning(f"Error extracting YouTube tracks from {url}: {e}")
+            return []
+
+    @classmethod
     def parse_input(cls, source: str) -> List[Dict[str, any]]:
         """
         Takes a file path, Spotify URL, or text query and returns a list of song dicts.
@@ -258,6 +325,12 @@ class ManifestParser:
 
                 # If extraction failed (e.g. private or 404), return empty list
                 return []
+
+        # 2b. YouTube URL input
+        if "youtube.com" in source or "youtu.be" in source:
+            yt_tracks = cls._fetch_youtube_tracks(source)
+            if yt_tracks:
+                return yt_tracks
 
         # 3. Direct song query fallback
         if " - " in source:

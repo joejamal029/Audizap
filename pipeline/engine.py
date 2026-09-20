@@ -15,6 +15,9 @@ from .metadata import MetadataResolver
 from .audio import AudioResolver
 from .transcoder import Transcoder
 from .tagger import Tagger
+from .qc import AcousticQC
+from .artwork import ArtworkResolver
+from .remediator import AudioRemediator
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +30,18 @@ class PipelineEngine:
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.metadata_resolver = MetadataResolver()
-        self.audio_resolver = AudioResolver(cookie_file=self.config.cookie_file)
+        self.audio_resolver = AudioResolver(cookie_file=self.config.cookie_file, bitrate=self.config.bitrate)
         self.transcoder = Transcoder()
         self.tagger = Tagger()
+        self.qc = AcousticQC()
+        self.artwork_resolver = ArtworkResolver()
+        self.remediator = AudioRemediator(
+            target_bitrate=self.config.bitrate,
+            sample_rate=self.config.sample_rate,
+            artwork_size=self.config.artwork_size,
+            cookie_file=self.config.cookie_file,
+            strict_qc=self.config.strict_acoustic_qc
+        )
         os.makedirs(self.config.output_dir, exist_ok=True)
 
     def process_single_song(self, song_item: Dict[str, str], progress_callback: Optional[Callable] = None) -> Dict[str, any]:
@@ -58,6 +70,17 @@ class PipelineEngine:
             fallback_track_number=song_item.get("track_number", 1),
             artwork_size=self.config.artwork_size
         )
+
+        # 1b. Enhance Artwork via 4-Tier Artwork Resolver
+        if not meta.artwork_data and self.config.embed_artwork:
+            art_bytes = self.artwork_resolver.resolve_artwork(
+                title=meta.title,
+                artist=meta.artist,
+                spotify_art_url=meta.artwork_url,
+                target_size=self.config.artwork_size
+            )
+            if art_bytes:
+                meta.artwork_data = art_bytes
 
         filename_base = sanitize_filename(f"{meta.artist} - {meta.title}")
         target_path = os.path.abspath(os.path.join(self.config.output_dir, f"{filename_base}.mp3"))
@@ -92,28 +115,79 @@ class PipelineEngine:
                 progress_callback(query, "skipped")
             return result
 
-        # 3. Multi-tier Audio Acquisition using isolated temp dir
-        temp_dir = tempfile.mkdtemp(prefix="audio_stream_")
-        temp_template = os.path.join(temp_dir, "stream.%(ext)s")
-
+        # 3. Multi-tier Audio Acquisition with Acoustic QC & Topic Fast-Track
         target_duration = duration or (meta.duration_ms // 1000 if meta.duration_ms else None)
-        downloaded, source_tier = self.audio_resolver.download_stream(
-            query=query,
-            output_template=temp_template,
-            duration_sec=target_duration,
-            tolerance=self.config.duration_tolerance
-        )
+        candidates = self.audio_resolver.get_candidates(query=query, duration_sec=target_duration)
 
-        raw_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir)]
-        if not downloaded or not raw_files:
-            result["error"] = "Audio stream download failed across all tiers"
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            if progress_callback:
-                progress_callback(query, "error")
-            return result
+        raw_downloaded = None
+        source_tier = None
+        active_temp_dir = None
 
-        raw_downloaded = raw_files[0]
+        for cand in candidates:
+            temp_dir = tempfile.mkdtemp(prefix="audio_stream_")
+            temp_template = os.path.join(temp_dir, "stream.%(ext)s")
+
+            # Check fast-track eligibility (Topic channel + matching duration)
+            is_fast_track = self.qc.is_fast_track_eligible(
+                candidate_channel=cand.get("channel", ""),
+                candidate_duration=cand.get("duration"),
+                expected_duration=target_duration,
+                tolerance=2
+            ) and not self.config.strict_acoustic_qc
+
+            downloaded = self.audio_resolver._run_ytdlp(cand["url"], temp_template)
+            raw_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if not f.endswith(".part")]
+
+            if not downloaded or not raw_files:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                continue
+
+            cand_file = raw_files[0]
+
+            # Run Acoustic QC if not fast-tracked
+            if not is_fast_track and self.config.enable_acoustic_qc:
+                qc_res = self.qc.verify_candidate(
+                    candidate_path=cand_file,
+                    title=meta.title,
+                    artist=meta.artist,
+                    candidate_channel=cand.get("channel", ""),
+                    candidate_duration=cand.get("duration"),
+                    expected_duration=target_duration,
+                    strict=self.config.strict_acoustic_qc
+                )
+                qc_verdict = qc_res.get("verdict", "OK")
+
+                if not qc_res.get("passed", True) or qc_verdict in ["LIVE_OR_DIFFERENT", "ANOMALOUS_DURATION"]:
+                    logger.warning(f"Candidate rejected for '{query}': {cand['title']} (QC: {qc_verdict}, Score: {qc_res.get('score')})")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    continue
+
+            # Candidate accepted!
+            raw_downloaded = cand_file
+            source_tier = cand.get("tier", "YouTube")
+            active_temp_dir = temp_dir
+            break
+
+        # Fallback if candidates failed
+        if not raw_downloaded:
+            active_temp_dir = tempfile.mkdtemp(prefix="audio_stream_")
+            temp_template = os.path.join(active_temp_dir, "stream.%(ext)s")
+            downloaded, source_tier = self.audio_resolver.download_stream(
+                query=query,
+                output_template=temp_template,
+                duration_sec=target_duration,
+                tolerance=self.config.duration_tolerance
+            )
+            raw_files = [os.path.join(active_temp_dir, f) for f in os.listdir(active_temp_dir) if not f.endswith(".part")]
+            if downloaded and raw_files:
+                raw_downloaded = raw_files[0]
+            else:
+                result["error"] = "Audio stream download failed across all tiers"
+                shutil.rmtree(active_temp_dir, ignore_errors=True)
+                if progress_callback:
+                    progress_callback(query, "error")
+                return result
+
         result["source"] = source_tier
 
         # 4. Transcode to uniform CBR standards (e.g. 128k CBR, 44.1kHz)
@@ -125,18 +199,16 @@ class PipelineEngine:
 
         if not transcoded:
             result["error"] = "FFmpeg transcode failed"
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(active_temp_dir, ignore_errors=True)
             if progress_callback:
                 progress_callback(query, "error")
             return result
 
-        import shutil
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         if os.path.exists(target_path):
             os.remove(target_path)
         shutil.move(raw_downloaded, target_path)
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(active_temp_dir, ignore_errors=True)
 
         # 5. Concurrent Tagging & Real-Time Synced Lyrics Retrieval
         tagged = self.tagger.tag_file(
@@ -246,4 +318,14 @@ class PipelineEngine:
                 results.append(res)
 
         return results
+
+    def remediate_local_folder(self, folder_path: str, progress_callback: Optional[Callable] = None) -> List[Dict[str, any]]:
+        """
+        Scans a local directory and remediates defective cuts, non-128k bitrates, and missing tags.
+        """
+        return self.remediator.remediate_folder(
+            folder_path=folder_path,
+            workers=self.config.workers,
+            progress_callback=progress_callback
+        )
 

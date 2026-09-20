@@ -22,8 +22,11 @@ build/
 *.lrc
 *.zip
 Artist And Artist Collection Newees 20/
+Newees 20 Ingestion/
 olamide newees 20/
 test_output/
+cache/
+.remediation_backup/
 
 # Logs & Temporary Files
 *.log

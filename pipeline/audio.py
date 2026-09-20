@@ -32,9 +32,10 @@ FORBIDDEN_DERIVATIVE_WORDS = [
 ]
 
 class AudioResolver:
-    def __init__(self, ytdlp_path: Optional[str] = None, cookie_file: Optional[str] = None):
+    def __init__(self, ytdlp_path: Optional[str] = None, cookie_file: Optional[str] = None, bitrate: str = "128k"):
         self.python_exe = sys.executable
         self.cookie_file = cookie_file
+        self.bitrate = bitrate
         self.ytmusic = None
         if HAS_YTMUSIC:
             try:
@@ -240,10 +241,75 @@ class AudioResolver:
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates
 
+    def get_candidates(self, query: str, duration_sec: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves ranked candidates across YouTube Music and YouTube search.
+        Includes video ID, title, channel, duration, and score for pre-flight QC.
+        """
+        if query.startswith("http://") or query.startswith("https://"):
+            return [{
+                "url": query,
+                "title": query,
+                "channel": "",
+                "duration": duration_sec,
+                "score": 100.0,
+                "tier": "Direct URL"
+            }]
+
+        simplified = self._clean_query(query)
+        target_artist, target_title = self._parse_artist_and_title(query)
+        if not target_title:
+            target_title = simplified
+
+        all_cands = []
+
+        # 1. YouTube Music API candidates
+        ytm = self._search_ytmusic_candidates(simplified, target_title, duration_sec)
+        for score, vid, title in ytm:
+            all_cands.append({
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "title": title,
+                "channel": f"{target_artist} - Topic",
+                "duration": duration_sec,
+                "score": score + 20.0,
+                "tier": "YouTube Music"
+            })
+
+        # 2. YouTube Search candidates
+        yt = self._search_youtube_candidates(f"{simplified} audio", target_title, target_artist, duration_sec)
+        if not yt:
+            yt = self._search_youtube_candidates(simplified, target_title, target_artist, duration_sec)
+
+        for item in yt:
+            # item is (score, vid, title) or (score, vid, title, chan, dur)
+            score = item[0]
+            vid = item[1]
+            title = item[2]
+            chan = item[3] if len(item) > 3 else ""
+            dur = item[4] if len(item) > 4 else None
+
+            all_cands.append({
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "title": title,
+                "channel": chan,
+                "duration": dur,
+                "score": score,
+                "tier": "YouTube Search"
+            })
+
+        all_cands.sort(key=lambda x: x["score"], reverse=True)
+        return all_cands
+
     def download_stream(self, query: str, output_template: str, duration_sec: Optional[int] = None, tolerance: int = 25) -> Tuple[bool, str]:
         """
         Attempts multi-tier audio downloads prioritizing authentic studio masters and filtering out live versions.
+        Supports direct URLs as well as search queries.
         """
+        if query.startswith("http://") or query.startswith("https://"):
+            if self._run_ytdlp(query, output_template):
+                return True, "Direct URL"
+            return False, "Failed"
+
         simplified = self._clean_query(query)
         target_artist, target_title = self._parse_artist_and_title(query)
         if not target_title:
@@ -261,7 +327,8 @@ class AudioResolver:
         if not yt_candidates:
             yt_candidates = self._search_youtube_candidates(simplified, target_title, target_artist, duration_sec)
 
-        for score, vid, title in yt_candidates:
+        for item in yt_candidates:
+            vid = item[1]
             url = f"https://www.youtube.com/watch?v={vid}"
             if self._run_ytdlp(url, output_template):
                 return True, "YouTube (Studio Scored)"
@@ -284,7 +351,7 @@ class AudioResolver:
             target_url,
             "-x",
             "--audio-format", "mp3",
-            "--audio-quality", "0",
+            "--audio-quality", self.bitrate if self.bitrate else "128k",
             "-o", output_template,
             "--no-playlist",
             "--retries", "3",

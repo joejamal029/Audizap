@@ -22,3 +22,7 @@ class PipelineConfig:
     force_update_art: bool = False     # Re-fetch and replace art even if present
     force_update_lyrics: bool = False  # Re-fetch and replace lyrics even if present
     cookie_file: Optional[str] = None  # Explicit path to Netscape-format cookies.txt
+    enable_acoustic_qc: bool = True    # Run acoustic cross-correlation on ambiguous tracks
+    strict_acoustic_qc: bool = False   # Force acoustic QC even on Topic channels
+    remediation_backup: bool = True    # Backup defective files to .remediation_backup/ before replacement
+    mode: str = "spotify"              # "spotify" or "youtube"

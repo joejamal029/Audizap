@@ -28,11 +28,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Robust, parallel music downloader with multi-tier audio fallbacks, canonical metadata, and synchronized in-file lyrics."
     )
-    parser.add_argument("source", help="Spotify URL (playlist, album, track), local audio folder to enrich, or tracklist text file")
+    parser.add_argument("source", nargs="?", default=None, help="Spotify URL, YouTube URL, local audio folder to remediate/enrich, or tracklist text file")
     parser.add_argument("--output", "-o", default=".", help="Output directory for downloaded tracks (default: current directory)")
     parser.add_argument("--bitrate", "-b", default="128k", help="Target constant bitrate CBR (e.g. 128k, 192k, 320k. Default: 128k)")
     parser.add_argument("--workers", "-w", type=int, default=4, help="Number of concurrent worker threads (default: 4)")
-    parser.add_argument("--enrich", "-e", action="store_true", help="Audit and enrich existing local MP3 files on disk without downloading audio")
+    parser.add_argument("--remediate", "-r", action="store_true", help="Audit & remediate audio quality on an existing folder (fixes bitrates, replaces live/defective cuts with studio masters)")
+    parser.add_argument("--enrich", "-e", action="store_true", help="Audit and enrich existing local MP3 files on disk (missing artwork/lyrics only)")
+    parser.add_argument("--strict-qc", action="store_true", help="Force acoustic cross-correlation even on Topic channels")
     parser.add_argument("--no-lyrics", action="store_true", help="Disable real-time synchronized lyrics embedding")
     parser.add_argument("--no-enrich-existing", action="store_true", help="Disable automatic in-place enrichment of existing files during downloads")
     parser.add_argument("--overwrite", action="store_true", help="Force re-download and re-tagging of existing files")
@@ -40,9 +42,84 @@ def main():
 
     args = parser.parse_args()
 
-    # Special Mode: Enrich existing local folder
-    is_folder = os.path.isdir(args.source)
-    if args.enrich or is_folder:
+    if not args.source and not args.remediate and not args.enrich:
+        parser.print_help()
+        return
+
+    is_folder = args.source and os.path.isdir(args.source)
+
+    # Special Mode 1: Audio Quality & Acoustic Remediation Mode
+    if args.remediate:
+        folder = args.source if is_folder else args.output
+        console.print(f"[bold magenta]🔬 AudiZap — Audio Quality & Acoustic Remediator[/bold magenta]")
+        console.print(f"[green]Target Folder:[/green] {os.path.abspath(folder)} | [green]Bitrate:[/green] {args.bitrate} CBR | [green]Workers:[/green] {args.workers}\n")
+
+        config = PipelineConfig(
+            output_dir=folder,
+            bitrate=args.bitrate,
+            workers=args.workers,
+            strict_acoustic_qc=args.strict_qc,
+            cookie_file=args.cookies
+        )
+        engine = PipelineEngine(config)
+
+        mp3_files = [
+            os.path.abspath(os.path.join(folder, f))
+            for f in os.listdir(folder)
+            if f.lower().endswith(".mp3")
+        ]
+        total_files = len(mp3_files)
+        if not mp3_files:
+            console.print(f"[yellow]No .mp3 files found in {folder}.[/yellow]")
+            return
+
+        console.print(f"[bold green]✓ Found {total_files} MP3 file(s) to remediate.[/bold green]\n")
+        start_time = time.perf_counter()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("({task.completed}/{task.total})"),
+            TimeRemainingColumn(),
+            console=console
+        ) as progress:
+            overall_task = progress.add_task("[magenta]Auditing & Remediating audio...", total=total_files)
+            results = []
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
+                futures = {
+                    executor.submit(engine.remediator.remediate_file, f): f
+                    for f in mp3_files
+                }
+                for future in as_completed(futures):
+                    res = future.result()
+                    results.append(res)
+                    progress.advance(overall_task)
+
+        elapsed = time.perf_counter() - start_time
+        verified_ok = sum(1 for r in results if r.get("action") == "verified_ok")
+        transcoded = sum(1 for r in results if r.get("action") == "transcoded_cbr_inplace")
+        replaced = sum(1 for r in results if r.get("action") == "replaced_studio_master")
+        failed = sum(1 for r in results if not r.get("success", True))
+
+        console.print("\n[bold magenta]Audio Remediation Summary:[/bold magenta]")
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Metric", style="dim")
+        table.add_column("Value")
+        table.add_row("Total Files Inspected", str(total_files))
+        table.add_row("Already Verified Studio Cuts", f"[green]{verified_ok}[/green]")
+        table.add_row("Transcoded to CBR In-Place", f"[cyan]{transcoded}[/cyan]")
+        table.add_row("Replaced Live/Anomalous with Studio Master", f"[yellow]{replaced}[/yellow]")
+        table.add_row("Failed / Unresolved", f"[red]{failed}[/red]" if failed else "[green]0[/green]")
+        table.add_row("Total Time", f"{elapsed:.1f} seconds")
+        console.print(table)
+        return
+
+    # Special Mode 2: Enrich existing local folder (Tags & Lyrics only)
+    if args.enrich or (is_folder and not args.remediate):
         folder = args.source if is_folder else args.output
         console.print(f"[bold cyan]🔍 AudiZap — Local Library Enricher & Auditor[/bold cyan]")
         console.print(f"[green]Auditing Folder:[/green] {os.path.abspath(folder)} | [green]Workers:[/green] {args.workers}\n")
