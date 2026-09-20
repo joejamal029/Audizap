@@ -1,4 +1,4 @@
-﻿# Virtual Environment
+# Virtual Environment
 venv/
 env/
 .env/
@@ -20,7 +20,9 @@ build/
 *.flac
 *.wav
 *.lrc
+*.zip
 Artist And Artist Collection Newees 20/
+olamide newees 20/
 test_output/
 
 # Logs & Temporary Files
