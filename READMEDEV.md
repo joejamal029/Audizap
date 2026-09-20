@@ -21,13 +21,13 @@ Rather than executing stage-by-stage across the entire batch (which causes slow 
      Worker Thread 1     Worker Thread 2     Worker Thread N
            │                   │                   │
     ┌──────┴───────────────────┴───────────────────┴──────┐
-    │ 1. Canonical Metadata & Square Artwork Resolution   │ (Apple Music / iTunes / Spotify CDN)
-    │ 2. Deduplication Check (Instant Skip if exists)     │ (os.path.exists check)
+    │ 1. Canonical Metadata & Square Artwork Resolution   │ (iTunes -> Deezer Fallback -> Spotify Source)
+    │ 2. Deduplication & In-Place Enrichment Audit        │ (Instant Skip if complete, or enrich in-place)
     │ 3. Isolated Temp Directory Allocation                │ (tempfile.mkdtemp)
-    │ 4. Smart Multi-Tier Audio Cascade                    │ (Clean Artist Query: YT -> SC -> Generic)
+    │ 4. Authenticated Studio Audio Cascade               │ (YTM Studio -> Scored Anti-Live YT -> SoundCloud)
     │ 5. Deterministic CBR Transcoding                     │ (FFmpeg libmp3lame 128k/320k)
     │ 6. Move from Temp to Output Path                     │
-    │ 7. Real-Time Lyrics Search                           │ (syncedlyrics: Musixmatch / NetEase / LRCLIB)
+    │ 7. Real-Time Concurrent Lyrics Search                │ (syncedlyrics: Musixmatch / NetEase / LRCLIB)
     │ 8. Atomic ID3 Injection                              │ (ID3v2.3: APIC + TIT2 + TCON + SYLT + USLT)
     └─────────────────────────────────────────────────────┘
                                │
@@ -41,16 +41,17 @@ Rather than executing stage-by-stage across the entire batch (which causes slow 
 ```
 Audizap/
 ├── cli.py                     # CLI entry point, argument parsing, rich progress UI
-├── gui.py                     # CustomTkinter modern dark UI application
+├── gui.py                     # CustomTkinter modern dark UI application with live auth badge
 ├── setup.py                   # Packaging & console script entry points (audizap, audizap-gui)
 ├── requirements.txt           # Project dependencies
 ├── Run_GUI.bat                # Windows quick launcher batch file
+├── cookies.txt                # Optional Netscape session cookies (strictly gitignored)
 ├── pipeline/
 │   ├── __init__.py            # Package initializer
 │   ├── config.py              # PipelineConfig dataclass
 │   ├── manifest.py            # Uncapped paginated Spotify & text manifest parser
-│   ├── metadata.py            # Canonical catalog resolver (Apple Music/iTunes API)
-│   ├── audio.py               # AudioResolver, cascaded multi-tier audio search
+│   ├── metadata.py            # Multi-source catalog resolver (iTunes + Deezer + Spotify)
+│   ├── audio.py               # AudioResolver, studio candidate scoring, cookies & cascade
 │   ├── transcoder.py          # Transcoder, FFmpeg CBR normalization
 │   ├── tagger.py              # Tagger, mutagen ID3v2.3, APIC, SYLT & USLT
 │   └── engine.py              # PipelineEngine, ThreadPoolExecutor orchestrator
@@ -75,13 +76,15 @@ pip install -e .
 ### 2. `pipeline/config.py`
 Defines `PipelineConfig` containing all mutable configuration parameters:
 - `output_dir`: Target directory.
-- `bitrate`: Default `128k` (or `320k`).
+- `bitrate`: Default `128k` (or `192k`, `320k`).
 - `sample_rate`: `44100` Hz standard.
 - `workers`: Default `4` concurrent threads.
-- `duration_tolerance`: Allowed deviation in seconds.
+- `duration_tolerance`: Allowed deviation in seconds (default: `20`s).
 - `embed_lyrics`: Boolean toggle for lyrics enrichment.
 - `embed_artwork`: Boolean toggle for square cover art.
 - `overwrite_existing`: Boolean flag to force re-download of existing tracks.
+- `enrich_existing`: Boolean flag to audit and enrich existing files on disk in-place.
+- `cookie_file`: Optional path to Netscape-format `cookies.txt` file (auto-detected if None).
 
 ### 3. `pipeline/manifest.py` (`ManifestParser`)
 - **Uncapped Pagination**: Uses `spotapi.PublicPlaylist` and `spotapi.PublicAlbum` pagination generators to retrieve complete tracklists of any size (e.g. 116, 500, 1,000+ songs) without requiring Spotify API developer credentials.
@@ -89,20 +92,24 @@ Defines `PipelineConfig` containing all mutable configuration parameters:
 - **Plaintext Support**: Parses `.txt` tracklists formatted as `Artist - Title` or single queries seamlessly.
 
 ### 4. `pipeline/metadata.py` (`MetadataResolver`)
-- Queries `https://itunes.apple.com/search`.
-- **Zero API Key Requirement**: Requires no OAuth tokens, developer registrations, or secret keys.
-- **Modern User-Agent**: Configured with a modern desktop browser user-agent to prevent CDN `403 Forbidden` firewall blocks.
-- **Canonical Decoupling**: Extracts `trackName`, `artistName`, `collectionName`, `trackNumber`, `trackCount`, `discNumber`, and `primaryGenreName`.
-- **Artwork CDN Resizing**: Converts standard `100x100bb.jpg` thumbnail links to high-res `1000x1000bb.jpg` square uncompressed images.
+Multi-source canonical metadata resolver with strict anti-mismatch filtering:
+- **Candidate Verification Filter (`_is_valid_candidate`)**: Evaluates string similarity ($\ge 0.60$) and token overlap between the requested song and returned candidates, instantly rejecting unrelated popular tracks.
+- **Multi-Candidate iTunes Search (`limit=5`)**: Inspects candidates sequentially and selects the first verified authentic track.
+- **Deezer API Fallback (`_search_deezer`)**: If iTunes lacks coverage (common in regional, Afrobeats, and indie releases), queries Deezer's public search API (< 200ms) for official metadata and uncompressed **1000×1000 square artwork**.
+- **Source Metadata Preservation**: Retains Spotify manifest title, artist, album, and artwork if external catalog searches yield no valid match.
 
 ### 5. `pipeline/audio.py` (`AudioResolver`)
-Implements an ordered, resilient cascade:
-- **Query Sanitization**: Automatically strips excessive featured artists and brackets (e.g. `Artist1, Artist2 - Title (feat. X)` becomes `Artist1 Title`) to match search algorithms reliably.
-- **Tier 1**: YouTube Search with clean query (`ytsearch1:{clean_query} audio`).
-- **Tier 2**: Direct YouTube Search (`ytsearch1:{clean_query}`).
-- **Tier 3**: SoundCloud Search (`scsearch1:{clean_query}`).
-- **Tier 4**: Broad YouTube Search with original query.
-- **Robust Python Invocation**: Uses `sys.executable -m yt_dlp` to ensure immunity to virtual environment relocations.
+Implements an authenticated, scored multi-tier audio cascade with anti-live defense:
+- **Cookie Discovery (`get_cookie_file`)**: Hierarchically discovers Netscape session cookies from explicit config $\rightarrow$ environment variables (`AUDIZAP_COOKIES`, `YTDLP_COOKIES`) $\rightarrow$ project root `cookies.txt` $\rightarrow$ working directory $\rightarrow$ user config directories. Automatically injects `--cookies` into both searches and downloads.
+- **Tier 1 (YouTube Music API)**: Uses `ytmusicapi.search(filter="songs")` to target official studio label releases directly, filtering out fan concert uploads and live recordings.
+- **Tier 2 (Scored Multi-Candidate Search `ytsearch5`)**:
+  - **Negative Live Penalty (-100 pts)**: Disqualifies `"live"`, `"concert"`, `"livehouse"`, `"performance"`, `"现场"`, `"acoustic session"` (unless explicitly requested in track title).
+  - **Derivative Penalty (-60 pts)**: Penalizes `"cover"`, `"remix"`, `"tribute"`, `"karaoke"`, `"slowed"`, `"reverb"`.
+  - **Official Studio Boosts**: Grants score boosts for artist topic channels (`"- Topic"`, +60 pts), `"(Official Audio)"` (+50 pts), and official music videos (+30 pts).
+  - **Duration Gating**: Rewards $\le 3$s catalog duration matching (+40 pts) and severely penalizes length drift $> 35$s (-80 pts).
+- **Tier 3 (SoundCloud Search `scsearch1`)**: Resilient secondary streaming fallback.
+- **Tier 4 (Broad Search)**: Fallback using the original query.
+- **Windows UTF-8 Encoding**: Subprocesses run with `encoding="utf-8", errors="replace"` to prevent `cp1252` encoding crashes on Asian and non-Latin characters.
 
 ### 6. `pipeline/transcoder.py` (`Transcoder`)
 - Invokes `ffmpeg -c:a libmp3lame -b:a {bitrate} -ar {sample_rate}`.
@@ -121,6 +128,7 @@ Implements an ordered, resilient cascade:
 ### 8. `pipeline/engine.py` (`PipelineEngine`)
 - Manages `concurrent.futures.ThreadPoolExecutor`.
 - Provides **Thread-Safe Temp Isolation**: Every worker creates its own isolated directory via `tempfile.mkdtemp(prefix="audio_stream_")`.
+- **Manifest Duration Gating**: Passes canonical track duration from resolved metadata to `AudioResolver` so even plain `.txt` file imports benefit from strict duration gating.
 - **Smart Deduplication & In-Place Enrichment**: Detects existing files in the download folder. If `enrich_existing=True`, audits the file: if art or lyrics are missing, it enriches them in-place; if already complete, it skips instantly.
 - **Local Folder Auditor**: `enrich_local_folder(folder_path)` discovers and audits all existing `.mp3` files in parallel across worker threads.
 
