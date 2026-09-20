@@ -96,10 +96,11 @@ class PipelineEngine:
         temp_dir = tempfile.mkdtemp(prefix="audio_stream_")
         temp_template = os.path.join(temp_dir, "stream.%(ext)s")
 
+        target_duration = duration or (meta.duration_ms // 1000 if meta.duration_ms else None)
         downloaded, source_tier = self.audio_resolver.download_stream(
             query=query,
             output_template=temp_template,
-            duration_sec=duration,
+            duration_sec=target_duration,
             tolerance=self.config.duration_tolerance
         )
 
