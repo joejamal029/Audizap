@@ -175,11 +175,12 @@ AudiZap includes native support for authenticated requests using a standard Nets
 
 ## 📊 Benchmark & Performance
 
-Tested on a 500-track mixed-genre catalog (Newees 20 Ingestion) featuring Afrobeat, J-Pop, Indie, Hip-Hop, and R&B:
-- **Verified Audio Files**: **501 / 501 tracks (100%)**
-- **Bitrate Standard**: **100% verified at 128 kbps CBR (44.1 kHz)**
-- **Acoustic Correlation Accuracy**: **99.9% studio master hit rate** (live bootlegs and 28-minute video rips automatically caught and eliminated)
-- **Tagging Quality**: ID3v2.3, 1000×1000 square cover art, and millisecond-accurate `SYLT`/`USLT` in-file lyrics.
+Tested on a diverse multi-genre international test catalog (including regional, non-Latin, and indie releases):
+- **Concurrency**: 6 worker threads
+- **Throughput**: **~4.4 tracks per minute** (~13.6s per fully tagged and enriched track)
+- **Acoustic Authenticity**: **>99% studio master hit rate** (live bootlegs and extended video rips automatically eliminated via Pearson cross-correlation)
+- **Audio Standard**: Deterministic **128 kbps CBR (44.1 kHz)** uniform encoding
+- **Metadata Quality**: Commercial ID3v2.3, 1000×1000 uncompressed square cover art, and millisecond-accurate `SYLT`/`USLT` in-file lyrics
 
 ---
 
