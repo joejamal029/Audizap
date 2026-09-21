@@ -54,6 +54,7 @@ Audizap/
 │   ├── metadata.py            # Multi-source catalog resolver (iTunes + Deezer + Spotify)
 │   ├── qc.py                  # [NEW] Acoustic QC, Pearson cross-correlation, multi-tier previews
 │   ├── artwork.py             # [NEW] 4-Tier 1000x1000 square artwork resolver
+│   ├── normalizer.py          # [NEW] Lossless Bitrate Normalizer & Smart Passthrough Engine
 │   ├── remediator.py          # [NEW] Audio Quality & Acoustic Remediation Engine
 │   ├── audio.py               # AudioResolver, studio candidate scoring, cookies & cascade
 │   ├── transcoder.py          # Transcoder, FFmpeg CBR normalization
@@ -155,6 +156,33 @@ The `AudioRemediator` transforms AudiZap into a complete maintenance tool for ex
 
 ---
 
+## 🎚️ Lossless Bitrate Normalizer Engine (`pipeline/normalizer.py`)
+
+The `BitrateNormalizer` provides standalone, in-place bitrate harmonization across existing audio folders with zero metadata degradation:
+
+1. **Smart Passthrough**:
+   - Compares the file's current CBR bitrate against the requested target bitrate:
+     $$\Delta \text{kbps} = |\text{bitrate}_{\text{current}} - \text{bitrate}_{\text{target}}|$$
+   - If $\Delta \text{kbps} \le 2$, the file is deemed compliant and **skipped instantly** with no re-encoding. This completely avoids lossy-to-lossy generation loss on already-compliant audio collections.
+
+2. **100% Lossless Tag Preservation (ID3v2.3 + Artwork + Synced Lyrics)**:
+   - Standard FFmpeg re-encoding strips proprietary binary frames like `SYLT` (millisecond synchronized lyrics) and can alter `APIC` cover art headers.
+   - Before executing FFmpeg, `BitrateNormalizer` captures a full in-memory snapshot of the existing `mutagen.id3.ID3` structure:
+     ```python
+     tag_snapshot = ID3(filepath)
+     ```
+   - FFmpeg re-encodes the stream to constant bitrate (CBR) in an isolated temporary file:
+     ```bash
+     ffmpeg -y -i input.mp3 -c:a libmp3lame -b:a 128k -ar 44100 -id3v2_version 3 temp.mp3
+     ```
+   - Following atomic replacement (`os.replace`), the exact snapshot is written back to the file with `v2_version=3`:
+     ```python
+     tag_snapshot.save(filepath, v2_version=3)
+     ```
+   - Guarantees 100% preservation of all 19+ ID3v2.3 frames, high-res cover art, and millisecond `SYLT` / `USLT` lyrics without any loss.
+
+---
+
 ## 🎶 Dual-Standard In-File Lyrics (`pipeline/tagger.py`)
 
 AudiZap embeds synchronized lyrics directly into the `.mp3` container using two simultaneous ID3v2.3 frames:
@@ -170,7 +198,7 @@ AudiZap embeds synchronized lyrics directly into the `.mp3` container using two 
 
 ## 🧪 Testing & Verification
 
-To run the automated test suite verifying all new modules:
+To run the automated test suite verifying all modules:
 ```bash
 python test_audizap_breakthroughs.py
 ```
@@ -180,4 +208,5 @@ Tests:
 - **`ArtworkResolver`**: 1000×1000 image resolution and cropping.
 - **`AcousticQC`**: Fast-track logic and Pearson cross-correlation.
 - **`AudioRemediator`**: File inspection and QC verification.
+- **`BitrateNormalizer`**: Lossless smart passthrough and ID3/lyrics tag preservation.
 - **`ManifestParser`**: Direct YouTube video and playlist extraction.

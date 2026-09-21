@@ -18,6 +18,7 @@ from .tagger import Tagger
 from .qc import AcousticQC
 from .artwork import ArtworkResolver
 from .remediator import AudioRemediator
+from .normalizer import BitrateNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class PipelineEngine:
             cookie_file=self.config.cookie_file,
             strict_qc=self.config.strict_acoustic_qc
         )
+        self.normalizer = BitrateNormalizer()
         os.makedirs(self.config.output_dir, exist_ok=True)
 
     def process_single_song(self, song_item: Dict[str, str], progress_callback: Optional[Callable] = None) -> Dict[str, any]:
@@ -326,6 +328,26 @@ class PipelineEngine:
         return self.remediator.remediate_folder(
             folder_path=folder_path,
             workers=self.config.workers,
+            progress_callback=progress_callback
+        )
+
+    def normalize_local_folder(
+        self,
+        folder_path: str,
+        target_bitrate: Optional[str] = None,
+        force: bool = False,
+        progress_callback: Optional[Callable] = None
+    ) -> List[Dict[str, any]]:
+        """
+        Scans a local directory and normalizes audio streams to the target CBR bitrate in-place,
+        losslessly preserving all ID3 tags, cover art, and synced lyrics.
+        """
+        return self.normalizer.normalize_folder(
+            folder_path=folder_path,
+            target_bitrate=target_bitrate or self.config.bitrate,
+            sample_rate=self.config.sample_rate,
+            workers=self.config.workers,
+            force=force,
             progress_callback=progress_callback
         )
 

@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--bitrate", "-b", default="128k", help="Target constant bitrate CBR (e.g. 128k, 192k, 320k. Default: 128k)")
     parser.add_argument("--workers", "-w", type=int, default=4, help="Number of concurrent worker threads (default: 4)")
     parser.add_argument("--remediate", "-r", action="store_true", help="Audit & remediate audio quality on an existing folder (fixes bitrates, replaces live/defective cuts with studio masters)")
+    parser.add_argument("--normalize-bitrate", "-n", action="store_true", help="Losslessly normalize bitrates of an existing folder in-place (ID3, cover art, and synced lyrics preserved)")
     parser.add_argument("--enrich", "-e", action="store_true", help="Audit and enrich existing local MP3 files on disk (missing artwork/lyrics only)")
     parser.add_argument("--strict-qc", action="store_true", help="Force acoustic cross-correlation even on Topic channels")
     parser.add_argument("--no-lyrics", action="store_true", help="Disable real-time synchronized lyrics embedding")
@@ -42,7 +43,7 @@ def main():
 
     args = parser.parse_args()
 
-    if not args.source and not args.remediate and not args.enrich:
+    if not args.source and not args.remediate and not args.enrich and not args.normalize_bitrate:
         parser.print_help()
         return
 
@@ -118,8 +119,74 @@ def main():
         console.print(table)
         return
 
+    # Special Mode 1.5: Lossless Bitrate Normalization Mode
+    if args.normalize_bitrate:
+        folder = args.source if is_folder else args.output
+        console.print(f"[bold cyan]🎚️ AudiZap — Lossless Bitrate Normalizer[/bold cyan]")
+        console.print(f"[green]Target Folder:[/green] {os.path.abspath(folder)} | [green]Target Bitrate:[/green] {args.bitrate} CBR | [green]Workers:[/green] {args.workers}\n")
+
+        config = PipelineConfig(
+            output_dir=folder,
+            bitrate=args.bitrate,
+            workers=args.workers,
+        )
+        engine = PipelineEngine(config)
+
+        mp3_files = [
+            os.path.abspath(os.path.join(folder, f))
+            for f in os.listdir(folder)
+            if f.lower().endswith(".mp3")
+        ]
+        total_files = len(mp3_files)
+        if not mp3_files:
+            console.print(f"[yellow]No .mp3 files found in {folder}.[/yellow]")
+            return
+
+        console.print(f"[bold green]✓ Found {total_files} MP3 file(s) to inspect & normalize.[/bold green]\n")
+        start_time = time.perf_counter()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("({task.completed}/{task.total})"),
+            TimeRemainingColumn(),
+            console=console
+        ) as progress:
+            overall_task = progress.add_task("[cyan]Normalizing bitrates...", total=total_files)
+            results = []
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
+                futures = {
+                    executor.submit(engine.normalizer.normalize_file, f, target_bitrate=args.bitrate): f
+                    for f in mp3_files
+                }
+                for future in as_completed(futures):
+                    res = future.result()
+                    results.append(res)
+                    progress.advance(overall_task)
+
+        elapsed = time.perf_counter() - start_time
+        skipped_match = sum(1 for r in results if r.get("action") == "skipped_already_target")
+        normalized = sum(1 for r in results if r.get("action") == "normalized_cbr_inplace")
+        failed = sum(1 for r in results if not r.get("success", True))
+
+        console.print("\n[bold cyan]Bitrate Normalization Summary:[/bold cyan]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Metric", style="dim")
+        table.add_column("Value")
+        table.add_row("Total Files Inspected", str(total_files))
+        table.add_row("Already at Target Bitrate (Passthrough)", f"[green]{skipped_match}[/green]")
+        table.add_row("Losslessly Normalized In-Place", f"[cyan]{normalized}[/cyan]")
+        table.add_row("Failed / Unresolved", f"[red]{failed}[/red]" if failed else "[green]0[/green]")
+        table.add_row("Total Time", f"{elapsed:.1f} seconds")
+        console.print(table)
+        return
+
     # Special Mode 2: Enrich existing local folder (Tags & Lyrics only)
-    if args.enrich or (is_folder and not args.remediate):
+    if args.enrich or (is_folder and not args.remediate and not args.normalize_bitrate):
         folder = args.source if is_folder else args.output
         console.print(f"[bold cyan]🔍 AudiZap — Local Library Enricher & Auditor[/bold cyan]")
         console.print(f"[green]Auditing Folder:[/green] {os.path.abspath(folder)} | [green]Workers:[/green] {args.workers}\n")

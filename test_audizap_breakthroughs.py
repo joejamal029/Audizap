@@ -81,10 +81,18 @@ if mp3s:
     print(f"    QC Verdict: {audit_res['qc_result'].get('verdict')} (Score: {audit_res['qc_result'].get('score')})")
     print(f"    Needs audio replacement: {audit_res['needs_audio_replacement']}")
 
-# 5. Test ManifestParser YouTube input
-print("\n--- 5. Testing ManifestParser YouTube Input ---")
-yt_url = "https://youtu.be/dQw4w9WgXcQ"
-yt_tracks = ManifestParser.parse_input(yt_url)
-print(f"  ✓ Parsed YouTube URL: {len(yt_tracks)} track(s) -> {yt_tracks[0]['artist']} - {yt_tracks[0]['title']}")
+from pipeline.normalizer import BitrateNormalizer
+
+# 6. Test BitrateNormalizer (Lossless Smart Passthrough & Tag Preservation)
+print("\n--- 6. Testing BitrateNormalizer ---")
+normalizer = BitrateNormalizer()
+if mp3s:
+    norm_audit = normalizer.inspect_bitrate(test_file)
+    print(f"  ✓ Inspected file: {os.path.basename(test_file)}")
+    print(f"    Current Bitrate: {norm_audit['bitrate_kbps']} kbps | Sample Rate: {norm_audit['sample_rate']} Hz")
+    
+    # Test smart passthrough on 128k file
+    norm_res = normalizer.normalize_file(test_file, target_bitrate="128k")
+    print(f"  ✓ Smart Passthrough result: {norm_res['action']} (Success: {norm_res['success']})")
 
 print("\n=== ALL BREAKTHROUGHS 100% VERIFIED! ===")

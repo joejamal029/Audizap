@@ -194,36 +194,52 @@ class ModernDownloaderApp(ctk.CTk):
         action_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="transparent")
         action_frame.pack(fill="x", padx=16, pady=(8, 4))
 
-        buttons_row = ctk.CTkFrame(action_frame, fg_color="transparent")
-        buttons_row.pack(fill="x", pady=4)
+        # Row 1: Primary Action (Start Download)
+        primary_btn_row = ctk.CTkFrame(action_frame, fg_color="transparent")
+        primary_btn_row.pack(fill="x", pady=(2, 4))
 
         self.start_btn = ctk.CTkButton(
-            buttons_row,
+            primary_btn_row,
             text="⚡ Start Download",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=42,
             fg_color="#1DB954",
             hover_color="#169b43",
             command=self._start_download_thread
         )
-        self.start_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.start_btn.pack(fill="x", expand=True)
+
+        # Row 2: Secondary Remediation Actions (Enrich, Normalize, Remediate)
+        remediation_row = ctk.CTkFrame(action_frame, fg_color="transparent")
+        remediation_row.pack(fill="x", pady=(0, 4))
 
         self.enrich_btn = ctk.CTkButton(
-            buttons_row,
+            remediation_row,
             text="🔍 Audit & Enrich Tags",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            height=40,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=36,
             fg_color="#3A7EBF",
             hover_color="#2b5f91",
             command=self._start_enrich_thread
         )
-        self.enrich_btn.pack(side="left", fill="x", expand=True, padx=4)
+        self.enrich_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        self.normalize_btn = ctk.CTkButton(
+            remediation_row,
+            text="🎚️ Normalize Bitrates",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=36,
+            fg_color="#00897B",
+            hover_color="#00695C",
+            command=self._start_normalize_thread
+        )
+        self.normalize_btn.pack(side="left", fill="x", expand=True, padx=4)
 
         self.remediate_btn = ctk.CTkButton(
-            buttons_row,
+            remediation_row,
             text="🔬 Remediate Audio Quality",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            height=40,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=36,
             fg_color="#8A2BE2",
             hover_color="#7B1FA2",
             command=self._start_remediate_thread
@@ -232,7 +248,7 @@ class ModernDownloaderApp(ctk.CTk):
 
         self.status_lbl = ctk.CTkLabel(
             action_frame,
-            text="Ready. Choose a mode, enter a link/folder, or click 'Remediate Audio Quality'.",
+            text="Ready. Choose a mode, enter a link/folder, or click a remediation tool.",
             font=ctk.CTkFont(size=12),
             text_color="#AAAAAA"
         )
@@ -316,6 +332,8 @@ class ModernDownloaderApp(ctk.CTk):
         self.is_downloading = True
         self.start_btn.configure(state="disabled", text="Processing...")
         self.enrich_btn.configure(state="disabled")
+        self.normalize_btn.configure(state="disabled")
+        self.remediate_btn.configure(state="disabled")
         self.progress_bar.set(0)
 
         # If user pointed to a folder as the source, run folder enrichment directly
@@ -354,6 +372,8 @@ class ModernDownloaderApp(ctk.CTk):
         self.is_downloading = True
         self.start_btn.configure(state="disabled")
         self.enrich_btn.configure(state="disabled", text="Auditing & Enriching...")
+        self.normalize_btn.configure(state="disabled")
+        self.remediate_btn.configure(state="disabled")
         self.progress_bar.set(0)
 
         t = threading.Thread(
@@ -513,6 +533,99 @@ class ModernDownloaderApp(ctk.CTk):
             self.log(f"FATAL PIPELINE ERROR: {e}")
             self._finish("An error occurred during execution.")
 
+    def _start_normalize_thread(self):
+        if self.is_downloading:
+            return
+
+        source = self.source_entry.get().strip()
+        output_dir = self.output_entry.get().strip() or "."
+
+        target_folder = source if os.path.isdir(source) else output_dir
+        if not os.path.isdir(target_folder):
+            messagebox.showerror("Error", f"Target folder does not exist:\n{target_folder}\n\nPlease select or enter an existing folder.")
+            return
+
+        bitrate_val = self.bitrate_menu.get().split()[0]
+        workers_val = int(self.workers_spinbox.get())
+
+        self.is_downloading = True
+        self.start_btn.configure(state="disabled")
+        self.enrich_btn.configure(state="disabled")
+        self.normalize_btn.configure(state="disabled", text="Normalizing...")
+        self.remediate_btn.configure(state="disabled")
+        self.progress_bar.set(0)
+
+        t = threading.Thread(
+            target=self._run_normalize_folder,
+            args=(target_folder, bitrate_val, workers_val),
+            daemon=True
+        )
+        t.start()
+
+    def _run_normalize_folder(self, folder, bitrate, workers):
+        try:
+            self.log(f"🎚️ Starting Lossless Bitrate Normalization on '{folder}'...")
+            self.status_lbl.configure(text="Scanning folder for audio files...")
+
+            mp3_files = [
+                os.path.abspath(os.path.join(folder, f))
+                for f in os.listdir(folder)
+                if f.lower().endswith(".mp3")
+            ]
+            total = len(mp3_files)
+            if not mp3_files:
+                self.log(f"No .mp3 files found in {folder}.")
+                self._finish("Normalization complete: No MP3 files found.")
+                return
+
+            self.log(f"Found {total} MP3 file(s). Normalizing bitrates with {workers} threads to {bitrate} CBR (lossless tag preservation)...")
+            config = PipelineConfig(
+                output_dir=folder,
+                bitrate=bitrate,
+                workers=workers,
+            )
+            engine = PipelineEngine(config)
+
+            completed = 0
+            skipped_count = 0
+            normalized_count = 0
+            failed_count = 0
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
+                futures = {
+                    executor.submit(engine.normalizer.normalize_file, f, target_bitrate=bitrate): f
+                    for f in mp3_files
+                }
+
+                for future in as_completed(futures):
+                    res = future.result()
+                    completed += 1
+                    filename = res["filename"]
+                    action = res.get("action", "none")
+
+                    if action == "skipped_already_target":
+                        skipped_count += 1
+                        self.log(f"⚡ [Passthrough OK] {filename} (Already {res.get('current_bitrate')}k CBR)")
+                    elif action == "normalized_cbr_inplace":
+                        normalized_count += 1
+                        self.log(f"🎚️ [Normalized CBR] {filename} ({res.get('old_bitrate')}k -> {res.get('new_bitrate')}k CBR, tags & lyrics preserved)")
+                    else:
+                        failed_count += 1
+                        self.log(f"⚠️ [Failed] {filename}: {res.get('message')}")
+
+                    pct = completed / total
+                    self.progress_bar.set(pct)
+                    self.status_lbl.configure(text=f"Normalized {completed}/{total} files ({int(pct*100)}%)...")
+
+            self.log(f"🎚️ Normalization complete! {skipped_count} passthrough (already {bitrate}), {normalized_count} losslessly normalized, {failed_count} failed out of {total} total.")
+            self._finish(f"Complete! {skipped_count} passthrough, {normalized_count} normalized.")
+
+        except Exception as e:
+            self.log(f"NORMALIZATION ERROR: {e}")
+            self._finish("An error occurred during normalization.")
+
     def _start_remediate_thread(self):
         if self.is_downloading:
             return
@@ -532,6 +645,7 @@ class ModernDownloaderApp(ctk.CTk):
         self.is_downloading = True
         self.start_btn.configure(state="disabled")
         self.enrich_btn.configure(state="disabled")
+        self.normalize_btn.configure(state="disabled")
         self.remediate_btn.configure(state="disabled", text="Remediating...")
         self.progress_bar.set(0)
 
@@ -618,6 +732,7 @@ class ModernDownloaderApp(ctk.CTk):
         self.is_downloading = False
         self.start_btn.configure(state="normal", text="⚡ Start Download")
         self.enrich_btn.configure(state="normal", text="🔍 Audit & Enrich Tags")
+        self.normalize_btn.configure(state="normal", text="🎚️ Normalize Bitrates")
         self.remediate_btn.configure(state="normal", text="🔬 Remediate Audio Quality")
         self.status_lbl.configure(text=status_msg)
 
