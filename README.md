@@ -111,9 +111,11 @@ audizap-gui
 ```
 
 * **⚡ Start Download**: Paste a Spotify playlist/album or YouTube playlist link, choose target bitrate (`128k`, `192k`, `320k`), and download.
+* **🏷️ Batch Tag Editor & Ingestion Studio**: Open a multi-source modal window to ingest files and folders across custom named sources, filter tracks, mass-assign genre/language buckets, artist, album, or release year, auto-parse filenames, and strip video title junk at scale.
 * **🔍 Audit & Enrich Tags**: Choose an existing music folder to inspect and inject missing 1000×1000 artwork and synced lyrics without re-encoding audio.
 * **🎚️ Normalize Bitrates**: Point at any existing folder to standardize audio bitrates to CBR with 100% lossless tag/lyrics preservation and smart passthrough.
 * **🔬 Remediate Audio Quality**: Point at any folder to run full acoustic QC: automatically fixes bitrates in-place, and detects and replaces live/bootleg cuts with verified studio masters.
+* **🧹 Debloat Tags**: Instantly purges Adobe Premiere/Audition `PRIV` project baggage and optimizes oversized artwork down to 1000×1000 master JPEGs without touching audio.
 
 ---
 

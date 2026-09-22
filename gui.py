@@ -194,7 +194,7 @@ class ModernDownloaderApp(ctk.CTk):
         action_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="transparent")
         action_frame.pack(fill="x", padx=16, pady=(8, 4))
 
-        # Row 1: Primary Action (Start Download)
+        # Row 1: Primary Action (Start Download & Batch Tag Editor)
         primary_btn_row = ctk.CTkFrame(action_frame, fg_color="transparent")
         primary_btn_row.pack(fill="x", pady=(2, 4))
 
@@ -207,9 +207,21 @@ class ModernDownloaderApp(ctk.CTk):
             hover_color="#169b43",
             command=self._start_download_thread
         )
-        self.start_btn.pack(fill="x", expand=True)
+        self.start_btn.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
-        # Row 2: Secondary Remediation Actions (Enrich, Normalize, Remediate)
+        self.batch_tag_btn = ctk.CTkButton(
+            primary_btn_row,
+            text="🏷️ Batch Tag Editor",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            height=42,
+            width=180,
+            fg_color="#FF6F00",
+            hover_color="#E65100",
+            command=self._open_batch_tag_editor
+        )
+        self.batch_tag_btn.pack(side="left", padx=(0, 0))
+
+        # Row 2: Secondary Remediation Actions (Enrich, Normalize, Remediate, Debloat)
         remediation_row = ctk.CTkFrame(action_frame, fg_color="transparent")
         remediation_row.pack(fill="x", pady=(0, 4))
 
@@ -839,6 +851,23 @@ class ModernDownloaderApp(ctk.CTk):
         except Exception as e:
             self.log(f"DEBLOATING ERROR: {e}")
             self._finish("An error occurred during debloating.")
+
+    def _open_batch_tag_editor(self):
+        from gui_editor import BatchTagEditorModal
+        editor = BatchTagEditorModal(parent=self)
+        # Pre-populate with current target folder if valid
+        source = self.source_entry.get().strip()
+        output_dir = self.output_entry.get().strip() or "."
+        target_folder = source if os.path.isdir(source) else output_dir
+        if os.path.isdir(target_folder):
+            mp3_files = []
+            for root, _, fnames in os.walk(target_folder):
+                for fn in fnames:
+                    if fn.lower().endswith(".mp3"):
+                        mp3_files.append(os.path.join(root, fn))
+            if mp3_files:
+                src_name = os.path.basename(os.path.normpath(target_folder)) or "Initial Folder"
+                editor._add_files_to_source(mp3_files, src_name)
 
     def _finish(self, status_msg: str):
         self.is_downloading = False
