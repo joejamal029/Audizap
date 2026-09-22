@@ -6,6 +6,7 @@ Resolve Metadata -> Audio Fallback -> Transcode -> Concurrent Lyrics & Tagging
 """
 import os
 import re
+import shutil
 import tempfile
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
