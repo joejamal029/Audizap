@@ -20,6 +20,7 @@ from .qc import AcousticQC
 from .artwork import ArtworkResolver
 from .remediator import AudioRemediator
 from .normalizer import BitrateNormalizer
+from .batch import BatchTagEditor
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class PipelineEngine:
             strict_qc=self.config.strict_acoustic_qc
         )
         self.normalizer = BitrateNormalizer()
+        self.batch_editor = BatchTagEditor()
         os.makedirs(self.config.output_dir, exist_ok=True)
 
     def process_single_song(self, song_item: Dict[str, str], progress_callback: Optional[Callable] = None) -> Dict[str, any]:

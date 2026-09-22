@@ -194,7 +194,7 @@ class ModernDownloaderApp(ctk.CTk):
         action_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="transparent")
         action_frame.pack(fill="x", padx=16, pady=(8, 4))
 
-        # Row 1: Primary Action (Start Download & Batch Tag Editor)
+        # Row 1: Primary Action (Start Download)
         primary_btn_row = ctk.CTkFrame(action_frame, fg_color="transparent")
         primary_btn_row.pack(fill="x", pady=(2, 4))
 
@@ -207,21 +207,9 @@ class ModernDownloaderApp(ctk.CTk):
             hover_color="#169b43",
             command=self._start_download_thread
         )
-        self.start_btn.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.start_btn.pack(fill="x", expand=True)
 
-        self.batch_tag_btn = ctk.CTkButton(
-            primary_btn_row,
-            text="🏷️ Batch Tag Editor",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            height=42,
-            width=180,
-            fg_color="#FF6F00",
-            hover_color="#E65100",
-            command=self._open_batch_tag_editor
-        )
-        self.batch_tag_btn.pack(side="left", padx=(0, 0))
-
-        # Row 2: Secondary Remediation Actions (Enrich, Normalize, Remediate, Debloat)
+        # Row 2: Secondary Remediation Actions (Enrich, Normalize, Remediate)
         remediation_row = ctk.CTkFrame(action_frame, fg_color="transparent")
         remediation_row.pack(fill="x", pady=(0, 4))
 
@@ -267,7 +255,18 @@ class ModernDownloaderApp(ctk.CTk):
             hover_color="#AD1457",
             command=self._start_debloat_thread
         )
-        self.debloat_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.debloat_btn.pack(side="left", fill="x", expand=True, padx=4)
+
+        self.batch_btn = ctk.CTkButton(
+            remediation_row,
+            text="🏷️ Batch Studio",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=36,
+            fg_color="#FF8F00",
+            hover_color="#E65100",
+            command=self._open_batch_studio
+        )
+        self.batch_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
         self.status_lbl = ctk.CTkLabel(
             action_frame,
@@ -852,23 +851,6 @@ class ModernDownloaderApp(ctk.CTk):
             self.log(f"DEBLOATING ERROR: {e}")
             self._finish("An error occurred during debloating.")
 
-    def _open_batch_tag_editor(self):
-        from gui_editor import BatchTagEditorModal
-        editor = BatchTagEditorModal(parent=self)
-        # Pre-populate with current target folder if valid
-        source = self.source_entry.get().strip()
-        output_dir = self.output_entry.get().strip() or "."
-        target_folder = source if os.path.isdir(source) else output_dir
-        if os.path.isdir(target_folder):
-            mp3_files = []
-            for root, _, fnames in os.walk(target_folder):
-                for fn in fnames:
-                    if fn.lower().endswith(".mp3"):
-                        mp3_files.append(os.path.join(root, fn))
-            if mp3_files:
-                src_name = os.path.basename(os.path.normpath(target_folder)) or "Initial Folder"
-                editor._add_files_to_source(mp3_files, src_name)
-
     def _finish(self, status_msg: str):
         self.is_downloading = False
         self.start_btn.configure(state="normal", text="⚡ Start Download")
@@ -876,7 +858,278 @@ class ModernDownloaderApp(ctk.CTk):
         self.normalize_btn.configure(state="normal", text="🎚️ Normalize Bitrates")
         self.remediate_btn.configure(state="normal", text="🔬 Remediate Quality")
         self.debloat_btn.configure(state="normal", text="🧹 Debloat Tags")
+        self.batch_btn.configure(state="normal", text="🏷️ Batch Studio")
         self.status_lbl.configure(text=status_msg)
+
+    def _open_batch_studio(self):
+        source = self.source_entry.get().strip()
+        output_dir = self.output_entry.get().strip() or "."
+        initial_folder = source if os.path.isdir(source) else output_dir
+        modal = BatchStudioModal(self, initial_folder=initial_folder if os.path.isdir(initial_folder) else None)
+        modal.focus()
+
+class BatchStudioModal(ctk.CTkToplevel):
+    """
+    Dedicated Multi-Source Batch Tagging & CSV Bucket Resolution Studio Modal.
+    """
+    def __init__(self, parent, initial_folder: Optional[str] = None):
+        super().__init__(parent)
+        self.title("🏷️ AudiZap — Batch Tag & Bucket Studio")
+        self.geometry("960x700")
+        self.minsize(860, 600)
+        self.parent = parent
+        self.tracks = []
+
+        self._build_ui()
+        if initial_folder:
+            self._add_folder_path(initial_folder)
+
+    def _build_ui(self):
+        # 1. Header Frame
+        hdr = ctk.CTkFrame(self, corner_radius=10, fg_color="#181818")
+        hdr.pack(fill="x", padx=16, pady=(16, 8))
+
+        title = ctk.CTkLabel(
+            hdr,
+            text="🏷️ Batch Tag & Bucket Studio",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="#FF8F00"
+        )
+        title.pack(side="left", padx=16, pady=12)
+
+        subtitle = ctk.CTkLabel(
+            hdr,
+            text="Multi-Source Ingestion • Scale Tag Editing • Automated CSV Bucket Mapping",
+            font=ctk.CTkFont(size=12),
+            text_color="#AAAAAA"
+        )
+        subtitle.pack(side="right", padx=16, pady=12)
+
+        # 2. Ingestion Controls Bar
+        ingest_frame = ctk.CTkFrame(self, corner_radius=10)
+        ingest_frame.pack(fill="x", padx=16, pady=4)
+
+        add_folder_btn = ctk.CTkButton(
+            ingest_frame,
+            text="📁 Add Source Folder",
+            font=ctk.CTkFont(weight="bold"),
+            fg_color="#3A7EBF",
+            hover_color="#2b5f91",
+            command=self._on_add_folder
+        )
+        add_folder_btn.pack(side="left", padx=(12, 6), pady=10)
+
+        add_files_btn = ctk.CTkButton(
+            ingest_frame,
+            text="🎵 Add Audio Files",
+            font=ctk.CTkFont(weight="bold"),
+            fg_color="#00897B",
+            hover_color="#00695C",
+            command=self._on_add_files
+        )
+        add_files_btn.pack(side="left", padx=6, pady=10)
+
+        clear_btn = ctk.CTkButton(
+            ingest_frame,
+            text="🗑️ Clear List",
+            font=ctk.CTkFont(weight="bold"),
+            fg_color="#555555",
+            hover_color="#444444",
+            command=self._on_clear
+        )
+        clear_btn.pack(side="left", padx=6, pady=10)
+
+        self.track_count_lbl = ctk.CTkLabel(
+            ingest_frame,
+            text="0 tracks loaded",
+            font=ctk.CTkFont(weight="bold"),
+            text_color="#1DB954"
+        )
+        self.track_count_lbl.pack(side="right", padx=16, pady=10)
+
+        # 3. Direct Batch Operations & CSV Section
+        ops_frame = ctk.CTkFrame(self, corner_radius=10)
+        ops_frame.pack(fill="x", padx=16, pady=4)
+
+        # Row 1: Direct Genre / Bucket Setter
+        row1 = ctk.CTkFrame(ops_frame, fg_color="transparent")
+        row1.pack(fill="x", padx=12, pady=(8, 4))
+
+        genre_lbl = ctk.CTkLabel(row1, text="Set Genre / Bucket:", font=ctk.CTkFont(weight="bold"))
+        genre_lbl.pack(side="left", padx=(0, 6))
+
+        self.genre_entry = ctk.CTkEntry(row1, placeholder_text="e.g. Naija, Gospel, English, J-Pop, C-Pop...", width=260)
+        self.genre_entry.pack(side="left", padx=6)
+
+        apply_genre_btn = ctk.CTkButton(
+            row1,
+            text="Apply to All Loaded",
+            font=ctk.CTkFont(weight="bold"),
+            fg_color="#FF8F00",
+            hover_color="#E65100",
+            command=self._on_apply_genre_all
+        )
+        apply_genre_btn.pack(side="left", padx=6)
+
+        # Row 2: CSV Reference Bucket Resolution
+        row2 = ctk.CTkFrame(ops_frame, fg_color="transparent")
+        row2.pack(fill="x", padx=12, pady=(4, 8))
+
+        csv_lbl = ctk.CTkLabel(row2, text="CSV Mapping File:", font=ctk.CTkFont(weight="bold"))
+        csv_lbl.pack(side="left", padx=(0, 6))
+
+        self.csv_path_entry = ctk.CTkEntry(row2, placeholder_text="Select reference CSV (e.g. Enriched_Language_Library.csv)...", width=340)
+        self.csv_path_entry.pack(side="left", padx=6)
+
+        browse_csv_btn = ctk.CTkButton(
+            row2,
+            text="Browse CSV",
+            width=90,
+            command=self._on_browse_csv
+        )
+        browse_csv_btn.pack(side="left", padx=6)
+
+        map_csv_btn = ctk.CTkButton(
+            row2,
+            text="📊 Auto-Map & Update",
+            font=ctk.CTkFont(weight="bold"),
+            fg_color="#8A2BE2",
+            hover_color="#7B1FA2",
+            command=self._on_apply_csv_mapping
+        )
+        map_csv_btn.pack(side="left", padx=6)
+
+        # 4. Ingested Tracks Table / Preview
+        table_frame = ctk.CTkFrame(self, corner_radius=10)
+        table_frame.pack(fill="both", expand=True, padx=16, pady=4)
+
+        tbl_hdr = ctk.CTkLabel(
+            table_frame,
+            text=f"{'#':<4} | {'Track Filename':<40} | {'Current Genre/Bucket':<22} | {'Artist - Title'}",
+            font=ctk.CTkFont(family="Consolas", size=11, weight="bold"),
+            text_color="#1DB954"
+        )
+        tbl_hdr.pack(anchor="w", padx=12, pady=(8, 2))
+
+        self.tracks_box = ctk.CTkTextbox(
+            table_frame,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color="#101010",
+            text_color="#DDDDDD"
+        )
+        self.tracks_box.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        # 5. Status Footer
+        self.modal_status_lbl = ctk.CTkLabel(
+            self,
+            text="Add source folders or files to begin batch editing.",
+            font=ctk.CTkFont(size=12),
+            text_color="#AAAAAA"
+        )
+        self.modal_status_lbl.pack(pady=(4, 12))
+
+    def _on_add_folder(self):
+        folder = filedialog.askdirectory(title="Select Folder to Ingest")
+        if folder:
+            self._add_folder_path(folder)
+
+    def _add_folder_path(self, folder: str):
+        from pipeline.batch import BatchTagEditor
+        new_tracks = BatchTagEditor.scan_sources([folder], recursive=True)
+        # Avoid duplicate filepaths
+        existing_paths = {t.filepath for t in self.tracks}
+        added = 0
+        for t in new_tracks:
+            if t.filepath not in existing_paths:
+                self.tracks.append(t)
+                existing_paths.add(t.filepath)
+                added += 1
+        self._refresh_tracks_view()
+        self.modal_status_lbl.configure(text=f"Added {added} track(s) from '{os.path.basename(folder)}'. Total: {len(self.tracks)} tracks.")
+
+    def _on_add_files(self):
+        files = filedialog.askopenfilenames(
+            title="Select Audio Files",
+            filetypes=[("MP3 Audio Files", "*.mp3"), ("All Files", "*.*")]
+        )
+        if files:
+            from pipeline.batch import BatchTagEditor
+            new_tracks = BatchTagEditor.scan_sources(list(files), recursive=False)
+            existing_paths = {t.filepath for t in self.tracks}
+            added = 0
+            for t in new_tracks:
+                if t.filepath not in existing_paths:
+                    self.tracks.append(t)
+                    existing_paths.add(t.filepath)
+                    added += 1
+            self._refresh_tracks_view()
+            self.modal_status_lbl.configure(text=f"Added {added} file(s). Total: {len(self.tracks)} tracks.")
+
+    def _on_clear(self):
+        self.tracks = []
+        self._refresh_tracks_view()
+        self.modal_status_lbl.configure(text="Track list cleared.")
+
+    def _on_browse_csv(self):
+        csv_file = filedialog.askopenfilename(
+            title="Select Reference CSV File",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
+        )
+        if csv_file:
+            self.csv_path_entry.delete(0, "end")
+            self.csv_path_entry.insert(0, csv_file)
+
+    def _refresh_tracks_view(self):
+        self.tracks_box.delete("1.0", "end")
+        for i, t in enumerate(self.tracks, start=1):
+            genre_display = t.genre or "[None]"
+            art_tit = f"{t.artist} - {t.title}" if (t.artist or t.title) else ""
+            line = f"{i:<4} | {t.filename[:38]:<40} | {genre_display[:20]:<22} | {art_tit[:40]}\n"
+            self.tracks_box.insert("end", line)
+        self.track_count_lbl.configure(text=f"{len(self.tracks)} track(s) loaded")
+
+    def _on_apply_genre_all(self):
+        genre = self.genre_entry.get().strip()
+        if not genre:
+            messagebox.showwarning("Warning", "Please enter a genre or bucket name.")
+            return
+        if not self.tracks:
+            messagebox.showwarning("Warning", "No tracks loaded. Ingest files or folders first.")
+            return
+
+        from pipeline.batch import BatchTagEditor
+        res = BatchTagEditor.batch_set_genre(self.tracks, genre=genre)
+        self._refresh_tracks_view()
+        self.modal_status_lbl.configure(
+            text=f"✓ Successfully updated all {res['updated']}/{res['total']} tracks to '{genre}'!"
+        )
+        messagebox.showinfo("Success", f"Updated {res['updated']} tracks to '{genre}'!")
+
+    def _on_apply_csv_mapping(self):
+        csv_path = self.csv_path_entry.get().strip()
+        if not csv_path or not os.path.exists(csv_path):
+            messagebox.showwarning("Warning", "Please select a valid CSV file.")
+            return
+        if not self.tracks:
+            messagebox.showwarning("Warning", "No tracks loaded. Ingest files or folders first.")
+            return
+
+        from pipeline.batch import BatchTagEditor
+        try:
+            map_res = BatchTagEditor.apply_csv_bucket_mapping(self.tracks, csv_path=csv_path)
+            self._refresh_tracks_view()
+            matched = map_res["matched_count"]
+            total = map_res["total_tracks"]
+            rate = map_res["match_rate"]
+            self.modal_status_lbl.configure(
+                text=f"✓ Auto-mapped {matched}/{total} tracks ({rate:.1f}% accuracy) from CSV!"
+            )
+            messagebox.showinfo(
+                "CSV Mapping Complete",
+                f"Matched & Updated: {matched} / {total} tracks ({rate:.1f}%)\nUnmatched: {map_res['unmatched_count']} tracks"
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to map CSV: {e}")
 
 if __name__ == "__main__":
     app = ModernDownloaderApp()

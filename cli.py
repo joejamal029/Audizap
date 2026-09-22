@@ -35,6 +35,9 @@ def main():
     parser.add_argument("--remediate", "-r", action="store_true", help="Audit & remediate audio quality on an existing folder (fixes bitrates, replaces live/defective cuts with studio masters)")
     parser.add_argument("--normalize-bitrate", "-n", action="store_true", help="Losslessly normalize bitrates of an existing folder in-place (ID3, cover art, and synced lyrics preserved)")
     parser.add_argument("--debloat", "-d", action="store_true", help="Strip non-audio metadata bloat (Adobe Premiere/Audition PRIV project histories, optimize oversized PNG artwork)")
+    parser.add_argument("--batch-genre", default=None, help="Batch assign a genre/bucket uniformly to all tracks in source folder(s)")
+    parser.add_argument("--csv-buckets", default=None, help="Path to CSV file with BUCKET definitions to auto-map and update tags")
+    parser.add_argument("--export-tags", default=None, help="Export current tags of tracks in source folder(s) to a CSV catalog file")
     parser.add_argument("--enrich", "-e", action="store_true", help="Audit and enrich existing local MP3 files on disk (missing artwork/lyrics only)")
     parser.add_argument("--strict-qc", action="store_true", help="Force acoustic cross-correlation even on Topic channels")
     parser.add_argument("--no-lyrics", action="store_true", help="Disable real-time synchronized lyrics embedding")
@@ -44,7 +47,9 @@ def main():
 
     args = parser.parse_args()
 
-    if not args.source and not args.remediate and not args.enrich and not args.normalize_bitrate and not args.debloat:
+    if (not args.source and not args.remediate and not args.enrich and 
+        not args.normalize_bitrate and not args.debloat and not args.batch_genre and 
+        not args.csv_buckets and not args.export_tags):
         parser.print_help()
         return
 
@@ -254,6 +259,60 @@ def main():
         table.add_row("Total Disk Space Reclaimed", f"[bold yellow]{total_saved_mb:.2f} MB[/bold yellow]")
         table.add_row("Total Time", f"{elapsed:.1f} seconds")
         console.print(table)
+        return
+
+    # Special Mode 1.8: Batch Set Genre / Bucket
+    if args.batch_genre:
+        folder = args.source if is_folder else args.output
+        console.print(f"[bold green]🏷️ AudiZap — Batch Tag Editor[/bold green]")
+        console.print(f"[green]Target Folder:[/green] {os.path.abspath(folder)} | [green]Target Genre/Bucket:[/green] [bold yellow]{args.batch_genre}[/bold yellow]\n")
+
+        from pipeline.batch import BatchTagEditor
+        tracks = BatchTagEditor.scan_sources([folder], recursive=True)
+        if not tracks:
+            console.print(f"[yellow]No .mp3 files found in {folder}.[/yellow]")
+            return
+
+        console.print(f"Found {len(tracks)} track(s). Updating ID3 TCON tags...")
+        res = BatchTagEditor.batch_set_genre(tracks, genre=args.batch_genre)
+        console.print(f"[bold green]✓ Successfully updated {res['updated']}/{res['total']} tracks to '{args.batch_genre}'![/bold green]\n")
+        return
+
+    # Special Mode 1.9: CSV Bucket Auto-Mapping & Tagging
+    if args.csv_buckets:
+        folder = args.source if is_folder else args.output
+        console.print(f"[bold magenta]📊 AudiZap — CSV Bucket & Language Resolver[/bold magenta]")
+        console.print(f"[green]Target Folder:[/green] {os.path.abspath(folder)}")
+        console.print(f"[green]Reference CSV:[/green] {os.path.abspath(args.csv_buckets)}\n")
+
+        from pipeline.batch import BatchTagEditor
+        tracks = BatchTagEditor.scan_sources([folder], recursive=True)
+        if not tracks:
+            console.print(f"[yellow]No .mp3 files found in {folder}.[/yellow]")
+            return
+
+        console.print(f"Loaded {len(tracks)} track(s). Resolving against CSV bucket definitions...")
+        map_res = BatchTagEditor.apply_csv_bucket_mapping(tracks, csv_path=args.csv_buckets)
+
+        console.print("\n[bold magenta]CSV Bucket Resolution Summary:[/bold magenta]")
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Metric", style="dim")
+        table.add_column("Value")
+        table.add_row("Total Files Inspected", str(map_res["total_tracks"]))
+        table.add_row("Matched & Updated", f"[bold green]{map_res['matched_count']}[/bold green]")
+        table.add_row("Unmatched / Retained", f"[yellow]{map_res['unmatched_count']}[/yellow]")
+        table.add_row("Match Accuracy Rate", f"[bold cyan]{map_res['match_rate']:.1f}%[/bold cyan]")
+        console.print(table)
+        return
+
+    # Special Mode 1.10: Export Tags to CSV
+    if args.export_tags:
+        folder = args.source if is_folder else args.output
+        from pipeline.batch import BatchTagEditor
+        tracks = BatchTagEditor.scan_sources([folder], recursive=True)
+        out_csv = os.path.abspath(args.export_tags)
+        BatchTagEditor.export_manifest_csv(tracks, out_csv)
+        console.print(f"[bold green]✓ Exported {len(tracks)} track tag definitions to: {out_csv}[/bold green]")
         return
 
     # Special Mode 2: Enrich existing local folder (Tags & Lyrics only)
