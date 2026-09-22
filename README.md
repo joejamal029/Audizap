@@ -24,10 +24,11 @@ Built to permanently solve real-world music archiving pain points: live concert 
   - Point AudiZap at **any existing music folder** on your drive.
   - **Bitrate Fix**: In-place transcodes non-128k files to uniform 128k CBR in ~0.2s without re-downloading.
   - **Defective Cut Replacement**: Automatically queries candidate variations, tests them against `AcousticQC`, safely backs up old files to `.remediation_backup/`, and atomically replaces them with verified studio masters.
-- **🎚️ Lossless Bitrate Normalizer (`pipeline/normalizer.py`)**:
+- **🎚️ Lossless Bitrate Normalizer & Debloater (`pipeline/normalizer.py`, `pipeline/tagger.py`)**:
   - Point AudiZap at **any existing music folder** to standardize bitrates to constant CBR (`128k`, `192k`, `320k`).
   - **100% Lossless Tag Preservation**: Extracts and snapshots full ID3v2.3 tags, APIC square cover art, and synchronized lyrics (`SYLT` millisecond binary and `USLT` timestamped text), restoring them identically post-transcode.
-  - **Smart Passthrough**: Automatically detects if a file is already at the target bitrate ($\pm 2$ kbps CBR) and skips re-encoding instantly with zero generation loss.
+  - **🧹 Deep Metadata Debloating**: Strips non-audio baggage left behind by digital audio workstations and video editors (e.g. Adobe Premiere / Media Encoder XMP project histories, camera reel logs in `PRIV` frames) and compresses uncompressed PNG artwork to standard 1000×1000 JPEG, **reclaiming up to 70% disk space per file with 0% audio generation loss**.
+  - **Smart Passthrough**: Automatically detects if a file is already at the target bitrate ($\pm 2$ kbps CBR) and skips re-encoding instantly while still debloating metadata.
 - **🎨 4-Tier 1000×1000 Square Artwork Resolver (`pipeline/artwork.py`)**:
   - **Tier 1**: Apple Music / iTunes CDN (uncompressed 1000×1000 / 1400×1400 square).
   - **Tier 2**: Spotify CDN (640×640).
@@ -119,25 +120,28 @@ audizap-gui
 ### 2. Command-Line Interface (CLI)
 
 ```bash
-# 1. Losslessly normalize bitrates of an existing folder (ID3, art, lyrics preserved):
+# 1. Losslessly normalize bitrates of an existing folder (ID3, art, lyrics preserved & debloated):
 audizap "C:\MyMusic\Playlist" --normalize-bitrate --bitrate 128k --workers 4
 
-# 2. Remediate an existing audio folder (fix bitrates, replace live cuts with studio masters):
+# 2. Pure metadata debloating (strip Adobe PRIV bloat & optimize oversized artwork without transcoding):
+audizap "C:\MyMusic\Playlist" --debloat --workers 4
+
+# 3. Remediate an existing audio folder (fix bitrates, replace live cuts with studio masters):
 audizap "C:\MyMusic\Playlist" --remediate --bitrate 128k --workers 4
 
-# 3. Download from a Spotify Playlist or Album:
+# 4. Download from a Spotify Playlist or Album:
 audizap "https://open.spotify.com/playlist/6kKAHaM396ytVUggvkM0qp" --bitrate 128k --workers 4
 
-# 4. Download from a YouTube Playlist:
+# 5. Download from a YouTube Playlist:
 audizap "https://youtube.com/playlist?list=PLfdFekLOHzDo" --bitrate 128k --workers 4
 
-# 5. Download with authenticated session cookies (bypasses bot checks & unlocks 256k AAC):
+# 6. Download with authenticated session cookies (bypasses bot checks & unlocks 256k AAC):
 audizap "https://open.spotify.com/playlist/6kKAHaM396ytVUggvkM0qp" --cookies ./cookies.txt
 
-# 6. Strict Acoustic QC (forces 30s preview cross-correlation on every song):
+# 7. Strict Acoustic QC (forces 30s preview cross-correlation on every song):
 audizap "My Spotify Library.txt" --strict-qc --bitrate 128k
 
-# 7. Audit & enrich tags on existing files (missing art/lyrics only):
+# 8. Audit & enrich tags on existing files (missing art/lyrics only):
 audizap "C:\MyMusic\Playlist" --enrich --workers 4
 ```
 
@@ -171,6 +175,7 @@ AudiZap includes native support for authenticated requests using a standard Nets
 |---|---|---|---|
 | **Source** | *Positional* | Spotify URL, YouTube URL, Folder, or `.txt` | Playlist URL, album URL, track, local audio folder, or text export |
 | **Normalize Bitrate** | `-n`, `--normalize-bitrate` | Flag (Disabled by default) | Losslessly normalizes bitrates in-place with smart passthrough & tag preservation |
+| **Debloat Mode** | `-d`, `--debloat` | Flag (Disabled by default) | Strips non-audio metadata baggage (Adobe PRIV histories) & optimizes artwork |
 | **Remediate Mode** | `-r`, `--remediate` | Flag (Disabled by default) | Audits audio quality, fixes bitrates in-place, and auto-replaces live cuts |
 | **Enrich Mode** | `-e`, `--enrich` | Flag (Disabled by default) | Injects missing cover art and lyrics into existing files without re-encoding |
 | **Strict QC** | `--strict-qc` | Flag (Disabled by default) | Forces acoustic cross-correlation even on Topic channels |

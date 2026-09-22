@@ -94,16 +94,29 @@ class BitrateNormalizer:
         result["old_bitrate"] = current_kbps
         result["new_bitrate"] = current_kbps
 
-        # 2. Smart Passthrough Check: Skip if already at target
+        # 2. Smart Passthrough Check: Skip transcode if already at target bitrate
+        from .tagger import Tagger
+
         if not force and abs(current_kbps - target_kbps) <= 2:
+            # Still run debloat check in passthrough mode to reclaim space from PRIV/oversized art
+            debloat_res = Tagger.strip_bloat_and_optimize(filepath)
+            if debloat_res["modified"]:
+                saved_mb = debloat_res["total_bytes_saved"] / (1024 * 1024)
+                result["action"] = "debloated_passthrough"
+                result["message"] = f"Already at target bitrate ({current_kbps}k CBR) — Reclaimed {saved_mb:.2f} MB of metadata bloat (PRIV frames stripped, art optimized)"
+                result["bytes_saved"] = debloat_res["total_bytes_saved"]
+                return result
+
             result["action"] = "skipped_already_target"
             result["message"] = f"Already at target bitrate ({current_kbps}k CBR)"
             return result
 
-        # 3. Capture Lossless ID3 Tag Snapshot
+        # 3. Capture Lossless ID3 Tag Snapshot & Optimize
         tag_snapshot = None
         try:
             tag_snapshot = ID3(filepath)
+            # Debloat the tag snapshot prior to restoring
+            Tagger.strip_bloat_and_optimize(filepath, tag_obj=tag_snapshot)
         except Exception as e:
             logger.debug(f"No existing ID3 tags to snapshot for {filename}: {e}")
 
@@ -143,7 +156,7 @@ class BitrateNormalizer:
             post_insp = self.inspect_bitrate(filepath)
             result["new_bitrate"] = post_insp["bitrate_kbps"]
             result["action"] = "normalized_cbr_inplace"
-            result["message"] = f"Normalized from {current_kbps}k to {result['new_bitrate']}k CBR (ID3 tags & lyrics preserved losslessly)"
+            result["message"] = f"Normalized from {current_kbps}k to {result['new_bitrate']}k CBR (ID3 tags debloated & preserved losslessly)"
             return result
 
         except Exception as e:

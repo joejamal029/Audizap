@@ -352,3 +352,43 @@ class PipelineEngine:
             progress_callback=progress_callback
         )
 
+    def debloat_local_folder(
+        self,
+        folder_path: str,
+        progress_callback: Optional[Callable] = None
+    ) -> List[Dict[str, any]]:
+        """
+        Scans a local directory and strips non-audio metadata bloat (Adobe PRIV project histories,
+        uncompressed PNG artwork) while strictly preserving canonical audio tags (TIT2, TPE1, TALB,
+        TRCK, TDRC, TCON, SYLT, USLT). Zero audio transcoding, pure lossless size optimization.
+        """
+        if not os.path.isdir(folder_path):
+            return []
+
+        mp3_files = [
+            os.path.abspath(os.path.join(folder_path, f))
+            for f in os.listdir(folder_path)
+            if f.lower().endswith(".mp3")
+        ]
+
+        if not mp3_files:
+            return []
+
+        def _worker(f):
+            filename = os.path.basename(f)
+            res = self.tagger.strip_bloat_and_optimize(f, max_art_dim=self.config.artwork_size)
+            res["filename"] = filename
+            res["filepath"] = f
+            return res
+
+        results = []
+        with ThreadPoolExecutor(max_workers=self.config.workers) as executor:
+            futures = {executor.submit(_worker, f): f for f in mp3_files}
+            for future in as_completed(futures):
+                r = future.result()
+                results.append(r)
+                if progress_callback:
+                    progress_callback(r["filename"], "debloated" if r["modified"] else "clean", r)
+
+        return results
+

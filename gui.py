@@ -237,14 +237,25 @@ class ModernDownloaderApp(ctk.CTk):
 
         self.remediate_btn = ctk.CTkButton(
             remediation_row,
-            text="🔬 Remediate Audio Quality",
+            text="🔬 Remediate Quality",
             font=ctk.CTkFont(size=12, weight="bold"),
             height=36,
             fg_color="#8A2BE2",
             hover_color="#7B1FA2",
             command=self._start_remediate_thread
         )
-        self.remediate_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.remediate_btn.pack(side="left", fill="x", expand=True, padx=4)
+
+        self.debloat_btn = ctk.CTkButton(
+            remediation_row,
+            text="🧹 Debloat Tags",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=36,
+            fg_color="#D81B60",
+            hover_color="#AD1457",
+            command=self._start_debloat_thread
+        )
+        self.debloat_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
         self.status_lbl = ctk.CTkLabel(
             action_frame,
@@ -728,12 +739,114 @@ class ModernDownloaderApp(ctk.CTk):
             self.log(f"REMEDIATION ERROR: {e}")
             self._finish("An error occurred during remediation.")
 
+    def _start_debloat_thread(self):
+        if self.is_downloading:
+            return
+
+        source = self.source_entry.get().strip()
+        output_dir = self.output_entry.get().strip() or "."
+
+        target_folder = source if os.path.isdir(source) else output_dir
+        if not os.path.isdir(target_folder):
+            messagebox.showerror("Error", f"Target folder does not exist:\n{target_folder}\n\nPlease select or enter an existing folder.")
+            return
+
+        workers_val = int(self.workers_spinbox.get())
+
+        self.is_downloading = True
+        self.start_btn.configure(state="disabled")
+        self.enrich_btn.configure(state="disabled")
+        self.normalize_btn.configure(state="disabled")
+        self.remediate_btn.configure(state="disabled")
+        self.debloat_btn.configure(state="disabled", text="Debloating...")
+        self.progress_bar.set(0)
+
+        t = threading.Thread(
+            target=self._run_debloat_folder,
+            args=(target_folder, workers_val),
+            daemon=True
+        )
+        t.start()
+
+    def _run_debloat_folder(self, folder, workers):
+        try:
+            self.log(f"🧹 Starting Lossless Metadata Debloating on '{folder}'...")
+            self.status_lbl.configure(text="Scanning folder for audio files...")
+
+            mp3_files = [
+                os.path.abspath(os.path.join(folder, f))
+                for f in os.listdir(folder)
+                if f.lower().endswith(".mp3")
+            ]
+            total = len(mp3_files)
+            if not mp3_files:
+                self.log(f"No .mp3 files found in {folder}.")
+                self._finish("Debloating complete: No MP3 files found.")
+                return
+
+            self.log(f"Found {total} MP3 file(s). Stripping PRIV baggage & compressing PNG artwork with {workers} threads...")
+            config = PipelineConfig(
+                output_dir=folder,
+                workers=workers,
+            )
+            engine = PipelineEngine(config)
+
+            completed = 0
+            debloated_count = 0
+            clean_count = 0
+            total_bytes_saved = 0
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _worker(f):
+                filename = os.path.basename(f)
+                res = engine.tagger.strip_bloat_and_optimize(f, max_art_dim=config.artwork_size)
+                res["filename"] = filename
+                return res
+
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
+                futures = {executor.submit(_worker, f): f for f in mp3_files}
+
+                for future in as_completed(futures):
+                    res = future.result()
+                    completed += 1
+                    filename = res["filename"]
+                    saved = res["total_bytes_saved"]
+                    total_bytes_saved += saved
+
+                    if res["modified"]:
+                        debloated_count += 1
+                        saved_mb = saved / (1024 * 1024)
+                        details = []
+                        if res["priv_removed"]:
+                            details.append(f"{res['priv_removed']} PRIV frames")
+                        if res["art_compressed"]:
+                            details.append("artwork optimized")
+                        detail_str = ", ".join(details)
+                        self.log(f"🧹 [Debloated] {filename} (-{saved_mb:.2f} MB via {detail_str})")
+                    else:
+                        clean_count += 1
+                        self.log(f"✓ [Clean] {filename} (No metadata bloat detected)")
+
+                    pct = completed / total
+                    self.progress_bar.set(pct)
+                    self.status_lbl.configure(text=f"Debloated {completed}/{total} files ({int(pct*100)}%)...")
+
+            saved_mb_total = total_bytes_saved / (1024 * 1024)
+            self.log(f"🧹 Debloating complete! {debloated_count} debloated (-{saved_mb_total:.2f} MB reclaimed), {clean_count} already clean out of {total} total.")
+            self._finish(f"Complete! Reclaimed {saved_mb_total:.1f} MB across {debloated_count} files.")
+
+        except Exception as e:
+            self.log(f"DEBLOATING ERROR: {e}")
+            self._finish("An error occurred during debloating.")
+
     def _finish(self, status_msg: str):
         self.is_downloading = False
         self.start_btn.configure(state="normal", text="⚡ Start Download")
         self.enrich_btn.configure(state="normal", text="🔍 Audit & Enrich Tags")
         self.normalize_btn.configure(state="normal", text="🎚️ Normalize Bitrates")
-        self.remediate_btn.configure(state="normal", text="🔬 Remediate Audio Quality")
+        self.remediate_btn.configure(state="normal", text="🔬 Remediate Quality")
+        self.debloat_btn.configure(state="normal", text="🧹 Debloat Tags")
         self.status_lbl.configure(text=status_msg)
 
 if __name__ == "__main__":

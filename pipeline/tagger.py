@@ -8,7 +8,7 @@ Fetches real-time synced lyrics per track and dual-embeds:
 import re
 import os
 import logging
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, TPOS, TDRC, TCON, APIC, USLT, SYLT, Encoding
 import syncedlyrics
 from .metadata import CanonicalMetadata
@@ -238,4 +238,78 @@ class Tagger:
         except Exception as e:
             logger.error(f"Error tagging {filepath}: {e}")
             return False
+
+    @classmethod
+    def strip_bloat_and_optimize(
+        cls,
+        filepath: str,
+        tag_obj: Optional[ID3] = None,
+        max_art_dim: int = 1000
+    ) -> Dict[str, Any]:
+        """
+        Removes non-audio metadata baggage (Adobe Premiere/Audition PRIV XMP histories,
+        camera reel logs, uncompressed PNG artwork) while strictly preserving canonical
+        audio tags (TIT2, TPE1, TALB, TRCK, TDRC, TCON, SYLT, USLT, etc.).
+
+        Returns a dictionary detailing:
+        - priv_removed: Number of PRIV frames stripped
+        - priv_bytes_saved: Estimated bytes reclaimed from PRIV removal
+        - art_compressed: Boolean indicating if artwork was re-compressed
+        - art_bytes_saved: Bytes saved by compressing oversized/PNG artwork
+        - total_bytes_saved: Overall tag bytes reduced
+        """
+        from .artwork import ArtworkResolver
+
+        res = {
+            "priv_removed": 0,
+            "priv_bytes_saved": 0,
+            "art_compressed": False,
+            "art_bytes_saved": 0,
+            "total_bytes_saved": 0,
+            "modified": False
+        }
+
+        try:
+            id3 = tag_obj if tag_obj is not None else ID3(filepath)
+        except Exception:
+            return res
+
+        # 1. Strip PRIV frames (e.g. Adobe XMP project histories)
+        priv_keys = [k for k in id3.keys() if k.startswith("PRIV")]
+        for k in priv_keys:
+            frame = id3[k]
+            data_len = len(getattr(frame, "data", b""))
+            res["priv_bytes_saved"] += data_len
+            res["priv_removed"] += 1
+            del id3[k]
+            res["modified"] = True
+
+        # 2. Inspect and optimize APIC frames (compress PNG or oversized art > 500KB)
+        apic_keys = [k for k in id3.keys() if k.startswith("APIC")]
+        for k in apic_keys:
+            frame = id3[k]
+            raw_art = getattr(frame, "data", b"")
+            # If PNG or large JPEG > 500KB
+            is_png = frame.mime == "image/png" or raw_art[:8] == b"\x89PNG\r\n\x1a\n"
+            if is_png or len(raw_art) > 500 * 1024:
+                opt_art = ArtworkResolver.optimize_image_bytes(raw_art, target_size=max_art_dim, quality=90)
+                if opt_art and len(opt_art) < len(raw_art):
+                    saved = len(raw_art) - len(opt_art)
+                    res["art_bytes_saved"] += saved
+                    res["art_compressed"] = True
+                    res["modified"] = True
+                    frame.data = opt_art
+                    frame.mime = "image/jpeg"
+                    frame.encoding = Encoding.UTF8
+
+        res["total_bytes_saved"] = res["priv_bytes_saved"] + res["art_bytes_saved"]
+
+        # Only save back to disk if tag_obj was not externally managed
+        if res["modified"] and tag_obj is None:
+            try:
+                id3.save(filepath, v2_version=3)
+            except Exception as e:
+                logger.warning(f"Failed to save optimized ID3 tag to {filepath}: {e}")
+
+        return res
 

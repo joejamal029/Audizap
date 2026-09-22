@@ -38,16 +38,15 @@ class ArtworkResolver:
             logger.debug(f"Failed to fetch image from {url}: {e}")
         return None
 
-    def _crop_to_square(self, img_bytes: bytes, target_size: int = 1000) -> Optional[bytes]:
+    @staticmethod
+    def optimize_image_bytes(img_bytes: bytes, target_size: int = 1000, quality: int = 90) -> Optional[bytes]:
         """
-        Takes raw image bytes, crops out 16:9 black letterbox bars if present,
-        performs 1:1 center crop, resizes to target_size, and returns JPEG bytes.
+        Compresses and normalizes raw image bytes into a high-quality 1000x1000 RGB JPEG.
+        Eliminates uncompressed PNG bloat (e.g. 7MB PNGs down to ~120KB JPEG).
         """
         try:
             img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
             w, h = img.size
-
-            # If 16:9 aspect ratio or wide, crop to square center
             if w != h:
                 min_dim = min(w, h)
                 left = (w - min_dim) // 2
@@ -56,16 +55,22 @@ class ArtworkResolver:
                 bottom = top + min_dim
                 img = img.crop((left, top, right, bottom))
 
-            # Resize with high-quality Lanczos resampling
             if img.size != (target_size, target_size):
                 img = img.resize((target_size, target_size), Image.Resampling.LANCZOS)
 
             out_buf = io.BytesIO()
-            img.save(out_buf, format="JPEG", quality=95)
+            img.save(out_buf, format="JPEG", quality=quality, optimize=True)
             return out_buf.getvalue()
         except Exception as e:
-            logger.debug(f"Error processing image bytes: {e}")
+            logger.debug(f"Error optimizing image bytes: {e}")
             return img_bytes
+
+    def _crop_to_square(self, img_bytes: bytes, target_size: int = 1000) -> Optional[bytes]:
+        """
+        Takes raw image bytes, crops out 16:9 black letterbox bars if present,
+        performs 1:1 center crop, resizes to target_size, and returns JPEG bytes.
+        """
+        return self.optimize_image_bytes(img_bytes, target_size=target_size, quality=95)
 
     def get_itunes_artwork(self, title: str, artist: str, target_size: int = 1000) -> Optional[bytes]:
         """Fetch 1000x1000 artwork from iTunes Search API."""

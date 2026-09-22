@@ -293,9 +293,16 @@ class AudioRemediator:
                 update_art=not info["has_art"],
                 update_lyrics=not info["has_lyrics"]
             )
-            if result["action"] == "none":
-                result["action"] = "enriched_tags"
-                result["message"] = "Enriched missing 1000x1000 artwork / synced lyrics"
+        # Case D: Debloat Metadata (Strip PRIV frames & optimize PNG/oversized art)
+        if result["action"] != "replaced_studio_master":
+            debloat_res = self.tagger.strip_bloat_and_optimize(filepath, max_art_dim=self.artwork_size)
+            if debloat_res["modified"]:
+                saved_mb = debloat_res["total_bytes_saved"] / (1024 * 1024)
+                if result["action"] == "none":
+                    result["action"] = "debloated_tags"
+                    result["message"] = f"Reclaimed {saved_mb:.2f} MB metadata bloat (stripped PRIV frames & optimized art)"
+                else:
+                    result["message"] += f" + reclaimed {saved_mb:.2f} MB metadata bloat"
 
         if result["action"] == "none":
             result["action"] = "verified_ok"
